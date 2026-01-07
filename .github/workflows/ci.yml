@@ -24,12 +24,16 @@ jobs:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
+      - name: version exporter
+        id: version
+        run: |
+          echo "lua_version=${${{ matrix.lua }}}" >> $GITHUB_OUTPUT
+
       - name: Install libreadline
         if: runner.os == 'Linux'
         run: |
           echo "/root/.local/bin" >> $GITHUB_PATH
           sudo apt-get install -y libreadline-dev libpcre2-dev
-
       - name: Install Lua (${{ matrix.lua }})
         run: |
           pipx install git+https://github.com/luarocks/hererocks
@@ -45,9 +49,9 @@ jobs:
       - name: Run tests
         run: |
           source lua_install/bin/activate
-          luarocks install --lua-version=${{ matrix.lua }} busted
-          luarocks install --lua-version=${{ matrix.lua }} dkjson
-          luarocks install --lua-version=${{ matrix.lua }} lrexlib-pcre2
+          luarocks --lua-version=${{ steps.version.outputs.lua_version }} install busted
+          luarocks --lua-version=${{ steps.version.outputs.lua_version }} install dkjson
+          luarocks --lua-version=${{ steps.version.outputs.lua_version }} install lrexlib-pcre2
           busted --verbose
         env:
           LUA_LIBDIR: lua_install/lib
