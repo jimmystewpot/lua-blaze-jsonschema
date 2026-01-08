@@ -7,22 +7,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [linux, macos-arm64]
-        lua: [lua=5.3, lua=5.4, luajit=2.0, luajit=2.1]
+        os: [linux]
+        lua: [lua=5.3, lua=5.4]
         include:
           - os: linux
             runner: ubuntu-latest
-          - os: macos-arm64
-            runner: macos-latest
         exclude:
-          - os: macos-arm64
-            lua: luajit=2.0
-          - os: macos-arm64
-            lua: luajit=2.1
-          - os: macos-arm64
-            lua: lua=5.3
-          - os: macos-arm64
-            lua: lua=5.4
           - os: linux
             lua: luajit=2.0
           - os: linux
@@ -53,16 +43,6 @@ jobs:
             lua=5.3) sudo apt-get update && sudo apt-get install -y libreadline-dev libpcre2-dev cmake build-essential lua5.3 luarocks lua5.3-dev ;;
             lua=5.4) sudo apt-get update && sudo apt-get install -y libreadline-dev libpcre2-dev cmake build-essential lua5.4 luarocks lua5.4-dev ;;  # Use default if available
             luajit=2.0|luajit=2.1) sudo apt-get update && sudo apt-get install -y libreadline-dev libpcre2-dev cmake build-essential luajit luarocks luajit-dev ;;
-          esac
-
-      - name: Install Lua and dependencies on macOS
-        if: runner.os == 'macOS'
-        run: |
-          brew install luarocks
-          case "${{ matrix.lua }}" in
-            lua=5.2|lua=5.3) echo "Lua version not directly available via Homebrew; consider using LuaJIT or 5.4" && exit 1 ;;  # Homebrew might not have old versions
-            lua=5.4) brew install lua@5.4 luarocks ;;  # Adjust if Homebrew has specific versions
-            luajit=2.0|luajit=2.1) brew install luajit luarocks ;;
           esac
 
       - name: Install luarocks dependencies
