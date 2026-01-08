@@ -110,7 +110,7 @@ Notes:
 
 - CMake >= 3.23
 - A C++20 compiler
-- Lua >= 5.2 (headers + library)
+- Lua >= 5.3 (headers + library)
 - Git (only needed if you want CMake to auto-init submodules)
 - LuaRocks (optional, for `luarocks make`)
 

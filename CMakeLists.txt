@@ -34,9 +34,9 @@ add_subdirectory(deps/blaze)
 if(DEFINED LUA_INCLUDE_DIR AND DEFINED LUA_LIBRARY)
   set(LUA_LIBRARIES ${LUA_LIBRARY})
 else()
-  find_package(Lua 5.2 REQUIRED)
-  if(DEFINED LUA_VERSION_STRING AND LUA_VERSION_STRING VERSION_LESS "5.2")
-    message(FATAL_ERROR "Lua >= 5.2 is required, but found ${LUA_VERSION_STRING}")
+  find_package(Lua 5.3 REQUIRED)
+  if(DEFINED LUA_VERSION_STRING AND LUA_VERSION_STRING VERSION_LESS "5.3")
+    message(FATAL_ERROR "Lua >= 5.3 is required, but found ${LUA_VERSION_STRING}")
   endif()
 endif()
 
@@ -54,7 +54,7 @@ else()
   elseif(DEFINED LUA_VERSION_MAJOR AND DEFINED LUA_VERSION_MINOR)
     set(LUA_INCLUDE_DIR "/usr/include/lua${LUA_VERSION_MAJOR}.${LUA_VERSION_MINOR}")
   else()
-    set(LUA_INCLUDE_DIR "/usr/include/lua5.2") # Fallback to min version, adjustable
+    set(LUA_INCLUDE_DIR "/usr/include/lua5.3") # Fallback to min version, adjustable
   endif()
 endif()
 

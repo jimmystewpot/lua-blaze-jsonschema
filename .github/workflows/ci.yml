@@ -8,7 +8,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [linux, macos-arm64]
-        lua: [lua=5.2, lua=5.3, lua=5.4, luajit=2.0, luajit=2.1]
+        lua: [lua=5.3, lua=5.4, luajit=2.0, luajit=2.1]
         include:
           - os: linux
             runner: ubuntu-latest
@@ -46,7 +46,6 @@ jobs:
         if: runner.os == 'linux'
         run: |
           case "${{ matrix.lua }}" in
-            lua=5.2) sudo apt-get update && sudo apt-get install -y libreadline-dev libpcre2-dev cmake build-essential lua5.2 luarocks lua5.2-dev ;;  # May require adding PPA
             lua=5.3) sudo apt-get update && sudo apt-get install -y libreadline-dev libpcre2-dev cmake build-essential lua5.3 luarocks lua5.3-dev ;;
             lua=5.4) sudo apt-get update && sudo apt-get install -y libreadline-dev libpcre2-dev cmake build-essential lua5.4 luarocks lua5.4-dev ;;  # Use default if available
             luajit=2.0|luajit=2.1) sudo apt-get update && sudo apt-get install -y libreadline-dev libpcre2-dev cmake build-essential luajit luarocks luajit-dev ;;
@@ -66,10 +65,10 @@ jobs:
       - name: Install luarocks dependencies
         if: always()
         run: |
-          sudo luarocks --lua-version=${{ steps.version.outputs.lua_version }} install busted
-          sudo luarocks --lua-version=${{ steps.version.outputs.lua_version }} install dkjson
-          sudo luarocks --lua-version=${{ steps.version.outputs.lua_version }} install lrexlib-pcre2
-          sudo luarocks --lua-version=${{ steps.version.outputs.lua_version }} install lua-schema
+          sudo -E luarocks --lua-version=${{ steps.version.outputs.lua_version }} install busted
+          sudo -E luarocks --lua-version=${{ steps.version.outputs.lua_version }} install dkjson
+          sudo -E luarocks --lua-version=${{ steps.version.outputs.lua_version }} install lrexlib-pcre2
+          sudo -E luarocks --lua-version=${{ steps.version.outputs.lua_version }} install lua-schema
 
       - name: Build lua-blaze
         if: always()
@@ -89,10 +88,10 @@ jobs:
                 echo "Error: LUA_LIBFILE is not set to a valid file: '${LUA_LIBFILE}'"
                 exit 1
               fi
-              sudo luarocks --lua-version=${{ steps.version.outputs.lua_version }} --verbose make
+              sudo -E luarocks --verbose --lua-version=${{ steps.version.outputs.lua_version }} make
               ;;
             *)
-              sudo luarocks --verbose make
+              sudo -E luarocks make
               ;;
           esac
       - name: Run tests
@@ -104,8 +103,8 @@ jobs:
             export LUA=$(which lua)
           fi
           echo "Debug: Using Lua version $($LUA -v)"
-          sudo luarocks --lua-version=${{ steps.version.outputs.lua_version }} install busted
-          sudo luarocks --lua-version=${{ steps.version.outputs.lua_version }} install dkjson
-          sudo luarocks --lua-version=${{ steps.version.outputs.lua_version }} install lrexlib-pcre2
-          sudo luarocks --lua-version=${{ steps.version.outputs.lua_version }} install lua-schema
-          busted --verbose
+          sudo -E luarocks --lua-version=${{ steps.version.outputs.lua_version }} install busted
+          sudo -E luarocks --lua-version=${{ steps.version.outputs.lua_version }} install dkjson
+          sudo -E luarocks --lua-version=${{ steps.version.outputs.lua_version }} install lrexlib-pcre2
+          sudo -E luarocks --lua-version=${{ steps.version.outputs.lua_version }} install lua-schema
+          busted --verbose --cpath=/usr/local/lib/luarocks/rocks-${{ steps.version.outputs.lua_version }}/?.so
