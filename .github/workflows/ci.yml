@@ -23,6 +23,10 @@ jobs:
             lua: lua=5.2
           - os: macos-arm64
             lua: lua=5.3
+          - os: linux
+            lua: luajit=2.0
+          - os: linux
+            lua: luajit=2.1
     name: ${{ matrix.os }} (${{ matrix.lua }})
     runs-on: ${{ matrix.runner }}
     steps:
