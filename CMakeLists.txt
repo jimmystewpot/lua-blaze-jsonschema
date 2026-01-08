@@ -31,9 +31,36 @@ endif()
 
 add_subdirectory(deps/blaze)
 
-find_package(Lua 5.2 REQUIRED)
-if(DEFINED LUA_VERSION_STRING AND LUA_VERSION_STRING VERSION_LESS "5.2")
-  message(FATAL_ERROR "Lua >= 5.2 is required, but found ${LUA_VERSION_STRING}")
+if(DEFINED LUA_INCLUDE_DIR AND DEFINED LUA_LIBRARY)
+  set(LUA_LIBRARIES ${LUA_LIBRARY})
+else()
+  find_package(Lua 5.2 REQUIRED)
+  if(DEFINED LUA_VERSION_STRING AND LUA_VERSION_STRING VERSION_LESS "5.2")
+    message(FATAL_ERROR "Lua >= 5.2 is required, but found ${LUA_VERSION_STRING}")
+  endif()
+endif()
+
+# Allow override with cache variable or environment variable
+set(LUA_INCDIR_OVERRIDE " " CACHE STRING "Override for Lua include directory")
+if(NOT "$ENV{LUA_INCDIR}" STREQUAL "")
+  set(LUA_INCLUDE_DIR $ENV{LUA_INCDIR})
+elseif(NOT "${LUA_INCDIR_OVERRIDE}" STREQUAL " ")
+  set(LUA_INCLUDE_DIR ${LUA_INCDIR_OVERRIDE})
+else()
+  # Prefer CMake's discovered include dir, but ensure it contains lua.hpp.
+  # If it does not, fall back to a versioned include directory.
+  if(DEFINED LUA_INCLUDE_DIR AND EXISTS "${LUA_INCLUDE_DIR}/lua.hpp")
+    # Keep the discovered include directory.
+  elseif(DEFINED LUA_VERSION_MAJOR AND DEFINED LUA_VERSION_MINOR)
+    set(LUA_INCLUDE_DIR "/usr/include/lua${LUA_VERSION_MAJOR}.${LUA_VERSION_MINOR}")
+  else()
+    set(LUA_INCLUDE_DIR "/usr/include/lua5.2") # Fallback to min version, adjustable
+  endif()
+endif()
+
+# Ensure the include dir is set and exists
+if(NOT EXISTS "${LUA_INCLUDE_DIR}/lua.hpp")
+  message(FATAL_ERROR "Lua header not found in ${LUA_INCLUDE_DIR}. Set LUA_INCDIR or LUA_INCDIR_OVERRIDE.")
 endif()
 
 add_library(blaze MODULE
@@ -55,15 +82,15 @@ if(WIN32)
     target_compile_options(blaze PRIVATE /utf-8)
     # MSVC optimizations for Release builds
     target_compile_options(blaze PRIVATE
-      $<$<CONFIG:Release>:/O2>           # Full optimization
-      $<$<CONFIG:Release>:/Ob2>          # Inline any suitable function
-      $<$<CONFIG:Release>:/Oi>           # Enable intrinsic functions
-      $<$<CONFIG:Release>:/Ot>           # Favor fast code
-      $<$<CONFIG:Release>:/GL>           # Whole program optimization
-      $<$<CONFIG:Release>:/DNDEBUG>      # Disable assertions
+      $<$<CONFIG:Release>:/O2> # Full optimization
+      $<$<CONFIG:Release>:/Ob2> # Inline any suitable function
+      $<$<CONFIG:Release>:/Oi> # Enable intrinsic functions
+      $<$<CONFIG:Release>:/Ot> # Favor fast code
+      $<$<CONFIG:Release>:/GL> # Whole program optimization
+      $<$<CONFIG:Release>:/DNDEBUG> # Disable assertions
     )
     target_link_options(blaze PRIVATE
-      $<$<CONFIG:Release>:/LTCG>         # Link-time code generation
+      $<$<CONFIG:Release>:/LTCG> # Link-time code generation
     )
   endif()
 elseif(APPLE)
@@ -77,13 +104,13 @@ endif()
 # GCC/Clang optimizations (Linux, macOS, MinGW)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(blaze PRIVATE
-    $<$<CONFIG:Release>:-O2>             # Aggressive optimization
-    $<$<CONFIG:Release>:-DNDEBUG>        # Disable assertions
-    $<$<CONFIG:Release>:-flto=auto>           # Link-time optimization
-    $<$<CONFIG:Release>:-fomit-frame-pointer>  # Free up a register
+    $<$<CONFIG:Release>:-O2> # Aggressive optimization
+    $<$<CONFIG:Release>:-DNDEBUG> # Disable assertions
+    $<$<CONFIG:Release>:-flto=auto> # Link-time optimization
+    $<$<CONFIG:Release>:-fomit-frame-pointer> # Free up a register
   )
   target_link_options(blaze PRIVATE
-    $<$<CONFIG:Release>:-flto=auto>           # LTO at link time
+    $<$<CONFIG:Release>:-flto=auto> # LTO at link time
   )
 endif()
 
@@ -94,9 +121,7 @@ set_target_properties(blaze PROPERTIES
   VISIBILITY_INLINES_HIDDEN ON
 )
 
-target_include_directories(blaze PRIVATE
-  ${LUA_INCLUDE_DIR}
-)
+target_include_directories(blaze PRIVATE ${LUA_INCLUDE_DIR})
 
 target_link_libraries(blaze PRIVATE
   ${LUA_LIBRARIES}

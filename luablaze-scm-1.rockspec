@@ -16,16 +16,12 @@ dependencies = {
   "lua >= 5.2"
 }
 external_dependencies = {
-  LUA = {
-    header = "lua.h",
-    library = "lua"
-  },
   CMAKE = {
     program = "cmake"
   }
 }
 build = {
   type = "command",
-  build_command = "cmake -S . -B build.luarocks -DLUABLAZE_INIT_SUBMODULES=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build.luarocks --parallel",
+  build_command = "cmake -S . -B build.luarocks -DLUA_INCLUDE_DIR=$LUA_INCDIR -DLUA_LIBRARY=$LUA_LIBFILE -DCMAKE_BUILD_TYPE=Release && cmake --build build.luarocks --parallel",
   install_command = "mkdir -p $(LIBDIR) && cp build.luarocks/luablaze.$(LIB_EXTENSION) $(LIBDIR)/luablaze.$(LIB_EXTENSION)"
 }

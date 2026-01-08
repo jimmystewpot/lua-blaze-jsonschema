@@ -22,5 +22,7 @@ local function dirname(path)
  add_cpath(root .. "/build")
  add_cpath(root .. "/build/Debug")
  add_cpath(root .. "/build/Release")
- add_cpath(root .. "lua_install")
- add_cpath(root .. "lua_install/lib")
+ add_cpath(root .. "/lua_install")
+ add_cpath(root .. "/lua_install/lib")
+
+

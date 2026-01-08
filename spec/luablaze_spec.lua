@@ -144,13 +144,18 @@ end
 
 describe("JSON-Schema-Test-Suite", function()
   it("runs the JSON-Schema-Test-Suite (excluding optional/remotes)", function()
-    local root = dirname(this_file_dir())
+    local root = os.getenv("GITHUB_WORKSPACE")
+    if not root or root == "" then
+      local p = assert(io.popen("pwd", "r"))
+      root = p:read("*l")
+      p:close()
+    end
     local suite_root = root .. "/deps/json-schema-test-suite"
     local tests_dir = suite_root .. "/tests"
 
     assert.is_true(
       dir_exists(tests_dir),
-      "JSON-Schema-Test-Suite submodule is missing. Ensure deps/json-schema-test-suite exists (e.g. run: git submodule update --init --recursive)"
+      "JSON-Schema-Test-Suite submodule is missing. Ensure " .. tests_dir .. " exists (e.g. run: git submodule update --init --recursive)"
     )
 
     local dialects = list_dialect_dirs(tests_dir)

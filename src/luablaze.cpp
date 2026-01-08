@@ -11,13 +11,10 @@
 #include <sourcemeta/blaze/output_standard.h>
 
 #include <cmath>
-#include <new>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <string_view>
-#include <unordered_set>
 
 // Lua module: `luablaze`
 //
