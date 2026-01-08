@@ -118,14 +118,27 @@ Notes:
 
 This repository uses git submodules for dependencies under `deps/`.
 
+Currently tracked submodules:
+
+- `deps/blaze` &mdash; required for every build.
+- `deps/json-schema-test-suite` &mdash; only needed for running tests/dev validation.
+
 If you cloned the repository without submodules, initialize them with:
 
 ```sh
 git submodule update --init --recursive
 ```
 
-In particular, `deps/blaze` will not be present unless you initialize
-submodules.
+You can also pull just what you need, e.g.:
+
+```sh
+git submodule update --init deps/blaze                  # build only
+git submodule update --init deps/blaze deps/json-schema-test-suite  # build + tests
+```
+
+The top-level CMake has an option `LUABLAZE_INIT_SUBMODULES` (default ON) that
+mirrors the commands above during configure. When `BUILD_TESTING` is enabled,
+only then will it update the JSON test suite submodule.
 
 ### Build with LuaRocks
 
@@ -170,6 +183,29 @@ You can disable that behavior with:
 ```sh
 cmake -S . -B build -DLUABLAZE_INIT_SUBMODULES=OFF
 ```
+
+### Testing
+
+Tests are driven by CTest and rely on the JSON Schema Test Suite data.
+
+1. Ensure submodules are ready for testing:
+  ```sh
+  git submodule update --init deps/blaze deps/json-schema-test-suite
+  ```
+2. Configure with tests enabled:
+  ```sh
+  cmake -S . -B build -DBUILD_TESTING=ON
+  ```
+  - `LUABLAZE_REQUIRE_TEST_SUITE` defaults to `BUILD_TESTING`, ensuring the
+    configure step fails fast if the test suite data is missing.
+3. Build and run the tests:
+  ```sh
+  cmake --build build
+  ctest --test-dir build
+  ```
+
+For CI or production builds where tests are unnecessary, configure with
+`-DBUILD_TESTING=OFF` (the default) and skip pulling the JSON test suite.
 
 ### Using the built module
 

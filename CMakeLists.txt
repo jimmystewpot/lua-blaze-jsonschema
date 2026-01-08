@@ -1,23 +1,31 @@
-cmake_minimum_required(VERSION 3.23)
+cmake_minimum_required(VERSION 3.10)
 
 project(luablaze)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(CTest)
+
 option(LUABLAZE_INIT_SUBMODULES "Initialize git submodules during CMake configure" ON)
-option(LUABLAZE_REQUIRE_TEST_SUITE "Require the JSON-Schema-Test-Suite submodule to be present" ON)
+option(LUABLAZE_REQUIRE_TEST_SUITE "Require the JSON-Schema-Test-Suite submodule to be present" ${BUILD_TESTING})
 
 if(LUABLAZE_INIT_SUBMODULES)
   find_package(Git QUIET)
   if(GIT_FOUND)
-    execute_process(
-      COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive
-      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-      RESULT_VARIABLE LUABLAZE_GIT_SUBMOD_RESULT
-    )
-    if(NOT LUABLAZE_GIT_SUBMOD_RESULT EQUAL 0)
-      message(FATAL_ERROR "git submodule update --init --recursive failed with exit code ${LUABLAZE_GIT_SUBMOD_RESULT}")
+    set(LUABLAZE_REQUIRED_SUBMODULES deps/blaze)
+    if(BUILD_TESTING)
+      list(APPEND LUABLAZE_REQUIRED_SUBMODULES deps/json-schema-test-suite)
     endif()
+    foreach(LUABLAZE_SUBMODULE ${LUABLAZE_REQUIRED_SUBMODULES})
+      execute_process(
+        COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive --depth 1 ${LUABLAZE_SUBMODULE}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        RESULT_VARIABLE LUABLAZE_GIT_SUBMOD_RESULT
+      )
+      if(NOT LUABLAZE_GIT_SUBMOD_RESULT EQUAL 0)
+        message(FATAL_ERROR "git submodule update --init --recursive ${LUABLAZE_SUBMODULE} failed with exit code ${LUABLAZE_GIT_SUBMOD_RESULT}")
+      endif()
+    endforeach()
   endif()
 endif()
 
@@ -25,8 +33,8 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/blaze/CMakeLists.txt")
   message(FATAL_ERROR "Blaze submodule not present at deps/blaze. Run: git submodule update --init --recursive")
 endif()
 
-if(LUABLAZE_REQUIRE_TEST_SUITE AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/json-schema-test-suite/tests/draft7")
-  message(FATAL_ERROR "JSON-Schema-Test-Suite submodule not present at deps/json-schema-test-suite. Run: git submodule update --init --recursive")
+if(BUILD_TESTING AND LUABLAZE_REQUIRE_TEST_SUITE AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/json-schema-test-suite/tests/draft7")
+  message(FATAL_ERROR "JSON-Schema-Test-Suite submodule not present at deps/json-schema-test-suite. Run: git submodule update --init --recursive deps/json-schema-test-suite")
 endif()
 
 add_subdirectory(deps/blaze)
