@@ -23,6 +23,8 @@ jobs:
             lua: lua=5.2
           - os: macos-arm64
             lua: lua=5.3
+          - os: macos-arm64
+            lua: lua=5.4
           - os: linux
             lua: luajit=2.0
           - os: linux
