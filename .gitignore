@@ -1,5 +1,10 @@
 build/
 build.luarocks/
+Testing
+docs/
+
+compile_commands.json
+DartConfiguration.tcl
 *.so
 *.dll
 *.o

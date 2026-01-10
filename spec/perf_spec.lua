@@ -301,7 +301,7 @@ describe("Performance", function()
       local blaze_compiled = luablaze.new(schema_json, { mode = "Fast" })
       local blaze_validate_fn = function()
         for _, inst in ipairs(instances) do
-          blaze_compiled:validate(inst)
+          blaze_compiled:validate_detailed(inst)
         end
       end
 
@@ -375,7 +375,7 @@ describe("Performance", function()
         local ratio = blaze.validate_s / lua_schema_result.validate_s
         local faster = ratio < 1 and "luablaze" or "lua-schema"
         local slower = ratio < 1 and "lua-schema" or "luablaze"
-        local factor = ratio < 1 and (1/ratio) or ratio
+        local factor = ratio < 1 and (1 / ratio) or ratio
         print(string.format(
           "[%s] %s is %.2fx faster than %s (validate: %.6fs vs %.6fs)",
           fx.name,

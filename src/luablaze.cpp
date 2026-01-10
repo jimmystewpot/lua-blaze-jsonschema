@@ -16,36 +16,76 @@
 #include <stdexcept>
 #include <string>
 
-// Lua module: `luablaze`
-//
-// This file implements a Lua C module that binds the Sourcemeta Blaze JSON
-// Schema compiler/evaluator.
-//
-// The binding model is:
-// - `luablaze.new(schema_json[, dialect_or_options[, options]]) -> CompiledSchema`
-// - `CompiledSchema:validate(instance_json) -> boolean`
-// - `CompiledSchema:evaluate(instance_json) -> boolean` (alias)
-// - `luablaze.validate(compiled_schema, instance_json) -> boolean`
-//
-// The schema is passed as a JSON string and parsed with
-// `sourcemeta::core::parse_json`. Instances can be provided either as Lua tables
-// (converted to a JSON value) or as JSON strings, depending on the method.
-// Compilation produces a Blaze `Template` which is stored in a Lua userdata and
-// later evaluated.
+/**
+ * @file luablaze.cpp
+ * @brief Lua bindings for Sourcemeta Blaze JSON Schema compiler/evaluator
+ *
+ * This file implements a Lua C module that binds the Sourcemeta Blaze JSON
+ * Schema compiler/evaluator.
+ *
+ * @section API
+ *
+ * The binding model provides the following API:
+ *
+ * Module-level functions:
+ * - `luablaze.new(schema_json[, options]) -> CompiledSchema`
+ * - `luablaze.validate(compiled_schema, instance_table) -> boolean`
+ * - `luablaze.validate_json(compiled_schema, instance_json_string) -> boolean`
+ * - `luablaze.validate_detailed(compiled_schema, instance_table) -> boolean, report_table`
+ * - `luablaze.validate_json_detailed(compiled_schema, instance_json_string) -> boolean, report_table`
+ *
+ * CompiledSchema methods:
+ * - `CompiledSchema:validate(instance_table) -> boolean`
+ * - `CompiledSchema:validate_json(instance_json_string) -> boolean`
+ * - `CompiledSchema:validate_detailed(instance_table) -> boolean, report_table`
+ * - `CompiledSchema:validate_json_detailed(instance_json_string) -> boolean, report_table`
+ * - `CompiledSchema:evaluate(instance_table) -> boolean` (alias for validate)
+ *
+ * The schema is passed as a JSON string and parsed with `sourcemeta::core::parse_json`.
+ * Instances can be provided either as Lua tables (converted to a JSON value) or as JSON
+ * strings, depending on the method. Compilation produces a Blaze `Template` which is
+ * stored in a Lua userdata and later evaluated.
+ *
+ * @section thread_safety Thread Safety
+ *
+ * **CompiledSchema objects are NOT thread-safe.**
+ *
+ * - Each CompiledSchema instance should be used by only one thread at a time
+ * - If multiple threads need to validate against the same schema, each thread should
+ *   create its own CompiledSchema instance via luablaze.new()
+ * - Alternatively, use external synchronization (mutexes) to protect shared access
+ * - The compilation process (luablaze.new) is thread-safe as long as each thread
+ *   operates on different Lua states
+ */
 
 static constexpr const char *LUABLAZE_COMPILEDSCHEMA_MT = "luablaze.CompiledSchema";
 
-// Convert a user-facing dialect identifier into a JSON Schema metaschema URI.
-//
-// Blaze/Core determine dialect via the schema's top-level `$schema`, but Blaze
-// also supports a `default_dialect` parameter for schemas that omit `$schema`.
-//
-// For the JSON-Schema-Test-Suite, the dialect is represented by the folder name
-// under `tests/` (e.g. `draft7`, `draft2019-09`, `draft2020-12`). This helper
-// maps those names to the appropriate metaschema URI.
-//
-// If the string already looks like a URI (contains "://"), it's treated as a
-// dialect URI and passed through unchanged.
+// Module version information
+static constexpr const char *LUABLAZE_VERSION           = "1.0.0";
+static constexpr const char *LUABLAZE_NAME              = "luablaze";
+
+// Blaze library version (passed from CMake)
+#ifndef BLAZE_LIBRARY_VERSION
+#define BLAZE_LIBRARY_VERSION "unknown"
+#endif
+static constexpr const char *BLAZE_VERSION = BLAZE_LIBRARY_VERSION;
+
+/**
+ * @brief Convert a user-facing dialect identifier into a JSON Schema metaschema URI.
+ *
+ * Blaze/Core determine dialect via the schema's top-level `$schema`, but Blaze
+ * also supports a `default_dialect` parameter for schemas that omit `$schema`.
+ *
+ * For the JSON-Schema-Test-Suite, the dialect is represented by the folder name
+ * under `tests/` (e.g. `draft7`, `draft2019-09`, `draft2020-12`). This helper
+ * maps those names to the appropriate metaschema URI.
+ *
+ * If the string already looks like a URI (contains "://"), it's treated as a
+ * dialect URI and passed through unchanged.
+ *
+ * @param name The dialect name or URI
+ * @return Optional metaschema URI, or nullopt if unrecognized
+ */
 static auto dialect_uri_from_name(const std::string &name) -> std::optional<std::string> {
     if (name.find("://") != std::string::npos) {
         return name;
@@ -207,9 +247,15 @@ static bool parse_options_table(lua_State *L, const int index, sourcemeta::blaze
     return true;
 }
 
-// Userdata payload for a compiled schema.
-//
-// We store the Blaze template by value directly inside the userdata.
+/**
+ * @brief Userdata payload for a compiled schema.
+ *
+ * We store the Blaze template by value directly inside the userdata.
+ *
+ * @var schema_template The compiled Blaze template
+ * @var max_array_length Maximum array length when converting Lua tables to JSON (0 = unlimited)
+ * @var max_depth Maximum nesting depth when parsing JSON strings (0 = unlimited)
+ */
 struct CompiledSchema {
     sourcemeta::blaze::Template schema_template;
     std::size_t max_array_length;
@@ -218,6 +264,67 @@ struct CompiledSchema {
 
 static bool lua_value_to_json(lua_State *L, int index, std::unordered_set<const void *> &seen,
                               const std::size_t max_array_length, sourcemeta::core::JSON &out, std::string &error);
+
+// Convert a JSON value to a Lua value and push it onto the stack.
+// Returns true on success, false on error (with error message in error string).
+static bool json_to_lua_value(lua_State *L, const sourcemeta::core::JSON &value, std::string &error);
+
+static bool json_object_to_lua_table(lua_State *L, const sourcemeta::core::JSON &obj, std::string &error) {
+    lua_createtable(L, 0, static_cast<int>(obj.size()));
+    for (const auto &pair : obj.as_object()) {
+        if (!json_to_lua_value(L, pair.second, error)) {
+            lua_pop(L, 1);
+            return false;
+        }
+        lua_setfield(L, -2, pair.first.c_str());
+    }
+    return true;
+}
+
+static bool json_array_to_lua_table(lua_State *L, const sourcemeta::core::JSON &arr, std::string &error) {
+    const std::size_t size = arr.size();
+    lua_createtable(L, static_cast<int>(size), 0);
+    for (std::size_t i = 0; i < size; i++) {
+        if (!json_to_lua_value(L, arr.at(i), error)) {
+            lua_pop(L, 1);
+            return false;
+        }
+        lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+    }
+    return true;
+}
+
+static bool json_to_lua_value(lua_State *L, const sourcemeta::core::JSON &value, std::string &error) {
+    if (value.is_null()) {
+        lua_pushnil(L);
+        return true;
+    }
+    if (value.is_boolean()) {
+        lua_pushboolean(L, value.to_boolean());
+        return true;
+    }
+    if (value.is_integer()) {
+        lua_pushinteger(L, static_cast<lua_Integer>(value.to_integer()));
+        return true;
+    }
+    if (value.is_real()) {
+        lua_pushnumber(L, static_cast<lua_Number>(value.to_real()));
+        return true;
+    }
+    if (value.is_string()) {
+        const auto &str = value.to_string();
+        lua_pushlstring(L, str.data(), str.size());
+        return true;
+    }
+    if (value.is_array()) {
+        return json_array_to_lua_table(L, value, error);
+    }
+    if (value.is_object()) {
+        return json_object_to_lua_table(L, value, error);
+    }
+    error = "Unsupported JSON type for Lua conversion";
+    return false;
+}
 
 static bool lua_table_to_json(lua_State *L, int index, std::unordered_set<const void *> &seen,
                               const std::size_t max_array_length, sourcemeta::core::JSON &out, std::string &error) {
@@ -295,8 +402,9 @@ static bool lua_table_to_json(lua_State *L, int index, std::unordered_set<const 
     lua_pushnil(L);
     while (lua_next(L, abs_index) != 0) {
         if (lua_type(L, -2) != LUA_TSTRING) {
+            const int key_type = lua_type(L, -2);
             lua_pop(L, 2);
-            error = "Object table keys must be strings";
+            error = std::string{"Object table keys must be strings (found "} + lua_typename(L, key_type) + ")";
             if (ptr != nullptr) {
                 seen.erase(ptr);
             }
@@ -356,9 +464,19 @@ static bool lua_value_to_json(lua_State *L, int index, std::unordered_set<const 
         }
         case LUA_TTABLE:
             return lua_table_to_json(L, abs_index, seen, max_array_length, out, error);
-        default:
-            error = std::string{"Unsupported Lua type for JSON conversion: "} + lua_typename(L, t);
+        default: {
+            std::ostringstream oss;
+            oss << "Unsupported Lua type for JSON conversion: " << lua_typename(L, t);
+            if (t == LUA_TUSERDATA || t == LUA_TLIGHTUSERDATA) {
+                oss << " (userdata cannot be converted to JSON)";
+            } else if (t == LUA_TFUNCTION) {
+                oss << " (functions cannot be converted to JSON)";
+            } else if (t == LUA_TTHREAD) {
+                oss << " (threads cannot be converted to JSON)";
+            }
+            error = oss.str();
             return false;
+        }
     }
 }
 
@@ -406,7 +524,18 @@ static int compiled_schema_gc(lua_State *L) {
     return 0;
 }
 
-// Implements `CompiledSchema:validate(instance_table)`.
+/**
+ * @brief Validate a Lua table against the compiled schema (simple boolean result).
+ *
+ * Implements `CompiledSchema:validate(instance_table) -> boolean`
+ *
+ * Converts the Lua table at stack index 2 to a JSON value, then validates it
+ * against the compiled schema template.
+ *
+ * @param L Lua state
+ * @return 1 (boolean result on stack)
+ * @throws Lua error on conversion or validation failure
+ */
 static int compiled_schema_validate(lua_State *L) {
     auto *compiled = check_compiled_schema(L, 1);
     luaL_checktype(L, 2, LUA_TTABLE);
@@ -429,6 +558,18 @@ static int compiled_schema_validate(lua_State *L) {
     }
 }
 
+/**
+ * @brief Validate a JSON string against the compiled schema (simple boolean result).
+ *
+ * Implements `CompiledSchema:validate_json(instance_json_string) -> boolean`
+ *
+ * Parses the JSON string at stack index 2, then validates it against the compiled
+ * schema template.
+ *
+ * @param L Lua state
+ * @return 1 (boolean result on stack)
+ * @throws Lua error on parse or validation failure
+ */
 static int compiled_schema_validate_json(lua_State *L) {
     auto *compiled = check_compiled_schema(L, 1);
     std::size_t instance_len{0};
@@ -448,7 +589,20 @@ static int compiled_schema_validate_json(lua_State *L) {
     }
 }
 
-static int compiled_schema_validate_output(lua_State *L) {
+/**
+ * @brief Validate a Lua table against the compiled schema with detailed report.
+ *
+ * Implements `CompiledSchema:validate_detailed(instance_table) -> boolean, report_table`
+ *
+ * Converts the Lua table at stack index 2 to a JSON value, validates it against
+ * the compiled schema template, and returns both the validation result and a detailed
+ * report in JSON Schema "basic" output format.
+ *
+ * @param L Lua state
+ * @return 2 (boolean result and report table on stack)
+ * @throws Lua error on conversion or validation failure
+ */
+static int compiled_schema_validate_detailed(lua_State *L) {
     auto *compiled = check_compiled_schema(L, 1);
     luaL_checktype(L, 2, LUA_TTABLE);
 
@@ -462,11 +616,19 @@ static int compiled_schema_validate_output(lua_State *L) {
         sourcemeta::blaze::Evaluator evaluator;
         const auto result{sourcemeta::blaze::standard(evaluator, compiled->schema_template, instance,
                                                       sourcemeta::blaze::StandardOutput::Basic)};
-        std::ostringstream out;
-        sourcemeta::core::stringify(result, out);
-        const auto serialized = out.str();
-        lua_pushlstring(L, serialized.c_str(), serialized.size());
-        return 1;
+
+        // Extract the "valid" field from the result
+        const bool is_valid =
+            result.defines("valid") && result.at("valid").is_boolean() ? result.at("valid").to_boolean() : false;
+
+        lua_pushboolean(L, is_valid);
+
+        // Convert the full result to a Lua table for detailed reporting
+        if (!json_to_lua_value(L, result, error)) {
+            throw std::runtime_error(error);
+        }
+
+        return 2; // Return (boolean, table)
     } catch (const std::exception &e) {
         return luaL_error(L, "%s", e.what());
     } catch (...) {
@@ -474,7 +636,20 @@ static int compiled_schema_validate_output(lua_State *L) {
     }
 }
 
-static int compiled_schema_validate_output_json(lua_State *L) {
+/**
+ * @brief Validate a JSON string against the compiled schema with detailed report.
+ *
+ * Implements `CompiledSchema:validate_json_detailed(instance_json_string) -> boolean, report_table`
+ *
+ * Parses the JSON string at stack index 2, validates it against the compiled schema
+ * template, and returns both the validation result and a detailed report in JSON Schema
+ * "basic" output format.
+ *
+ * @param L Lua state
+ * @return 2 (boolean result and report table on stack)
+ * @throws Lua error on parse or validation failure
+ */
+static int compiled_schema_validate_json_detailed(lua_State *L) {
     auto *compiled = check_compiled_schema(L, 1);
     std::size_t instance_len{0};
     const char *instance_str = luaL_checklstring(L, 2, &instance_len);
@@ -485,11 +660,20 @@ static int compiled_schema_validate_output_json(lua_State *L) {
         sourcemeta::blaze::Evaluator evaluator;
         const auto result{sourcemeta::blaze::standard(evaluator, compiled->schema_template, instance,
                                                       sourcemeta::blaze::StandardOutput::Basic)};
-        std::ostringstream out;
-        sourcemeta::core::stringify(result, out);
-        const auto serialized = out.str();
-        lua_pushlstring(L, serialized.c_str(), serialized.size());
-        return 1;
+
+        // Extract the "valid" field from the result
+        const bool is_valid =
+            result.defines("valid") && result.at("valid").is_boolean() ? result.at("valid").to_boolean() : false;
+
+        lua_pushboolean(L, is_valid);
+
+        // Convert the full result to a Lua table for detailed reporting
+        std::string error;
+        if (!json_to_lua_value(L, result, error)) {
+            throw std::runtime_error(error);
+        }
+
+        return 2; // Return (boolean, table)
     } catch (const std::exception &e) {
         return luaL_error(L, "%s", e.what());
     } catch (...) {
@@ -497,26 +681,48 @@ static int compiled_schema_validate_output_json(lua_State *L) {
     }
 }
 
-// Implements `CompiledSchema:evaluate(instance_json)`.
-//
-// For this binding, `evaluate` is an alias of `validate`.
+/**
+ * @brief Alias for validate() - evaluates a Lua table against the compiled schema.
+ *
+ * Implements `CompiledSchema:evaluate(instance_table) -> boolean`
+ *
+ * For this binding, `evaluate` is an alias of `validate`.
+ *
+ * @param L Lua state
+ * @return 1 (boolean result on stack)
+ * @see compiled_schema_validate
+ */
 static int compiled_schema_evaluate(lua_State *L) {
     return compiled_schema_validate(L);
 }
 
-// Implements `luablaze.new(schema_json[, dialect_or_options[, options]])`.
-//
-// Compiles a JSON Schema string into a Blaze template. If `dialect` is provided
-// (either as the second argument string, or as `options.dialect`), it is passed
-// as Blaze's `default_dialect` so that schemas without `$schema` can still be
-// compiled under the correct rules.
-//
-// The compilation `mode` can be controlled using `options.mode`:
-// - "Fast" (default): attempt to short-circuit to a boolean result
-// - "Exhaustive": perform exhaustive evaluation, including annotations
+/**
+ * @brief Compile a JSON Schema string into a reusable compiled schema object.
+ *
+ * Implements `luablaze.new(schema_json[, options]) -> CompiledSchema`
+ *
+ * Compiles a JSON Schema string into a Blaze template. Options can control:
+ * - `dialect`: JSON Schema dialect (e.g., "draft7", "draft2020-12", or a $schema URI)
+ * - `mode`: Compilation mode ("Fast" or "Exhaustive")
+ * - `max_array_length`: Maximum array length for Lua table to JSON conversion (default: 100000, 0 = unlimited)
+ * - `max_depth`: Maximum nesting depth for JSON parsing (default: 128, 0 = unlimited)
+ *
+ * @param L Lua state (expects schema_json_string at index 1, optional options table at index 2)
+ * @return 1 (CompiledSchema userdata on stack)
+ * @throws Lua error on parse or compilation failure
+ *
+ * @code{.lua}
+ * local schema = luablaze.new([[{"type": "string"}]])
+ * local schema2 = luablaze.new(schema_json, { dialect = "draft7", mode = "Exhaustive" })
+ * @endcode
+ */
 static int luablaze_new(lua_State *L) {
     std::size_t schema_len{0};
     const char *schema_str = luaL_checklstring(L, 1, &schema_len);
+
+    if (schema_len == 0) {
+        return luaL_error(L, "schema cannot be empty");
+    }
 
     std::optional<std::string> default_dialect{std::nullopt};
     sourcemeta::blaze::Mode mode{sourcemeta::blaze::Mode::FastValidation};
@@ -573,14 +779,14 @@ static int luablaze_validate_json(lua_State *L) {
     return compiled_schema_validate_json(L);
 }
 
-static int luablaze_validate_output(lua_State *L) {
+static int luablaze_validate_detailed(lua_State *L) {
     (void)check_compiled_schema(L, 1);
-    return compiled_schema_validate_output(L);
+    return compiled_schema_validate_detailed(L);
 }
 
-static int luablaze_validate_output_json(lua_State *L) {
+static int luablaze_validate_json_detailed(lua_State *L) {
     (void)check_compiled_schema(L, 1);
-    return compiled_schema_validate_output_json(L);
+    return compiled_schema_validate_json_detailed(L);
 }
 
 // Module function table for `require("luablaze")`.
@@ -588,8 +794,8 @@ static const struct luaL_Reg luablaze_functions[] = {
     {"new", luablaze_new},
     {"validate", luablaze_validate},
     {"validate_json", luablaze_validate_json},
-    {"validate_output", luablaze_validate_output},
-    {"validate_output_json", luablaze_validate_output_json},
+    {"validate_detailed", luablaze_validate_detailed},
+    {"validate_json_detailed", luablaze_validate_json_detailed},
     {NULL, NULL},
 };
 
@@ -604,8 +810,8 @@ LUABLAZE_EXPORT int luaopen_luablaze(lua_State *L) {
     static const luaL_Reg compiled_schema_methods[] = {
         {"validate", compiled_schema_validate},
         {"validate_json", compiled_schema_validate_json},
-        {"validate_output", compiled_schema_validate_output},
-        {"validate_output_json", compiled_schema_validate_output_json},
+        {"validate_detailed", compiled_schema_validate_detailed},
+        {"validate_json_detailed", compiled_schema_validate_json_detailed},
         {"evaluate", compiled_schema_evaluate},
         {"__gc", compiled_schema_gc},
         {NULL, NULL},
@@ -614,5 +820,16 @@ LUABLAZE_EXPORT int luaopen_luablaze(lua_State *L) {
     lua_pop(L, 1);
 
     luaL_newlib(L, luablaze_functions);
+
+    // Add version information to the module table
+    lua_pushstring(L, LUABLAZE_VERSION);
+    lua_setfield(L, -2, "_VERSION");
+
+    lua_pushstring(L, LUABLAZE_NAME);
+    lua_setfield(L, -2, "_NAME");
+
+    lua_pushstring(L, BLAZE_VERSION);
+    lua_setfield(L, -2, "_BLAZE_VERSION");
+
     return 1;
 }

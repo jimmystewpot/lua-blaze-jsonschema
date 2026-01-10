@@ -2,6 +2,25 @@ require("spec.spec_helper")
 
 local luablaze = require("luablaze")
 
+describe("Module metadata", function()
+  it("has _VERSION constant", function()
+    assert.is_not_nil(luablaze._VERSION)
+    assert.is_string(luablaze._VERSION)
+    assert.is_true(#luablaze._VERSION > 0)
+  end)
+
+  it("has _NAME constant", function()
+    assert.is_not_nil(luablaze._NAME)
+    assert.are.equal("luablaze", luablaze._NAME)
+  end)
+
+  it("has _BLAZE_VERSION constant", function()
+    assert.is_not_nil(luablaze._BLAZE_VERSION)
+    assert.is_string(luablaze._BLAZE_VERSION)
+    assert.is_true(#luablaze._BLAZE_VERSION > 0)
+  end)
+end)
+
 local json
 do
   local ok, mod = pcall(require, "dkjson")
@@ -155,7 +174,8 @@ describe("JSON-Schema-Test-Suite", function()
 
     assert.is_true(
       dir_exists(tests_dir),
-      "JSON-Schema-Test-Suite submodule is missing. Ensure " .. tests_dir .. " exists (e.g. run: git submodule update --init --recursive)"
+      "JSON-Schema-Test-Suite submodule is missing. Ensure " ..
+      tests_dir .. " exists (e.g. run: git submodule update --init --recursive)"
     )
 
     local dialects = list_dialect_dirs(tests_dir)
@@ -205,10 +225,11 @@ describe("JSON-Schema-Test-Suite", function()
                 local actual = compiled:validate_json(instance_str)
                 if actual ~= test.valid then
                   print("Test Data: ", instance_str)
-                  local output = compiled:validate_output_json(instance_str)
+                  local ok, output_table = compiled:validate_json_detailed(instance_str)
+                  local output_str = json.encode(output_table)
                   assert.are.equal(test.valid, actual, string.format(
                     "Mismatch in %s [%s]: %s / %s\nOutput: %s",
-                    file, dialect, tostring(group.description), tostring(test.description), tostring(output)
+                    file, dialect, tostring(group.description), tostring(test.description), tostring(output_str)
                   ))
                 end
               end
@@ -237,6 +258,12 @@ describe("Testing Malicious Lua data structures", function()
     return s
   end
 
+  it("rejects empty schema string", function()
+    local ok, err = pcall(luablaze.new, "")
+    assert.is_false(ok)
+    assert.is_true(tostring(err):find("schema cannot be empty", 1, true) ~= nil)
+  end)
+
   it("enforces max_depth when parsing schemas in luablaze.new", function()
     local schema = deep_object_json(5)
     local ok, err = pcall(luablaze.new, schema, { max_depth = 2 })
@@ -255,12 +282,12 @@ describe("Testing Malicious Lua data structures", function()
     assert.is_true(tostring(err):find("JSON maximum nesting depth exceeded", 1, true) ~= nil)
   end)
 
-  it("enforces max_depth in validate_output_json", function()
+  it("enforces max_depth in validate_json_detailed", function()
     local schema = "{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"array\"}"
     local compiled = luablaze.new(schema, { max_depth = 2 })
     local instance = deep_array_json(5)
     local ok, err = pcall(function()
-      return compiled:validate_output_json(instance)
+      return compiled:validate_json_detailed(instance)
     end)
     assert.is_false(ok)
     assert.is_true(tostring(err):find("JSON maximum nesting depth exceeded", 1, true) ~= nil)
@@ -305,7 +332,8 @@ end)
 
 describe("Required fields", function()
   it("fails when required fields are missing", function()
-    local schema = "{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"s\":{\"type\":\"string\",\"minLength\":1},\"n\":{\"type\":\"number\"}},\"required\":[\"s\",\"n\"]}"
+    local schema =
+    "{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"s\":{\"type\":\"string\",\"minLength\":1},\"n\":{\"type\":\"number\"}},\"required\":[\"s\",\"n\"]}"
     local compiled = luablaze.new(schema)
 
     assert.is_false(compiled:validate_json("{}"))
@@ -314,7 +342,8 @@ describe("Required fields", function()
   end)
 
   it("fails when required string fields are null or empty", function()
-    local schema = "{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"s\":{\"type\":\"string\",\"minLength\":1},\"n\":{\"type\":\"number\"}},\"required\":[\"s\",\"n\"]}"
+    local schema =
+    "{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"s\":{\"type\":\"string\",\"minLength\":1},\"n\":{\"type\":\"number\"}},\"required\":[\"s\",\"n\"]}"
     local compiled = luablaze.new(schema)
 
     assert.is_false(compiled:validate_json("{\"s\":null,\"n\":1}"))
@@ -323,7 +352,8 @@ describe("Required fields", function()
   end)
 
   it("fails when required number fields are null or wrong type", function()
-    local schema = "{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"s\":{\"type\":\"string\",\"minLength\":1},\"n\":{\"type\":\"number\"}},\"required\":[\"s\",\"n\"]}"
+    local schema =
+    "{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"s\":{\"type\":\"string\",\"minLength\":1},\"n\":{\"type\":\"number\"}},\"required\":[\"s\",\"n\"]}"
     local compiled = luablaze.new(schema)
 
     assert.is_false(compiled:validate_json("{\"s\":\"ok\",\"n\":null}"))

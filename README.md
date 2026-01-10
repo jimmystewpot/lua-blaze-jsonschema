@@ -9,7 +9,13 @@ This project builds a Lua C module named `luablaze` that lets you:
 
 ### API
 
-#### `luablaze.new(schema_json_string[, dialect_or_options[, options]]) -> CompiledSchema`
+#### Module Constants
+
+- `luablaze._VERSION` (string) - Module version, e.g. `"1.0.0"`
+- `luablaze._NAME` (string) - Module name, always `"luablaze"`
+- `luablaze._BLAZE_VERSION` (string) - Sourcemeta Blaze library version, e.g. `"0.0.1"`
+
+#### `luablaze.new(schema_json_string[, options]) -> CompiledSchema`
 
 Compiles the given JSON Schema (as a string) and returns a `CompiledSchema` userdata.
 
@@ -28,11 +34,11 @@ luablaze.new(schema_json, { max_depth = 128 })
   `draft2019-09`, `draft2020-12`, or a full `$schema` URI.
 - `mode` can be `"Fast"` (default) or `"Exhaustive"`.
 - `max_array_length` limits the maximum array length produced when converting Lua tables to JSON values. Default: `100000`. Use `0` for unlimited.
-- `max_depth` limits maximum nesting depth when parsing schema/instance JSON strings (for `new`, `validate_json`, and `validate_output_json`). Default: `128`. Use `0` for unlimited.
+- `max_depth` limits maximum nesting depth when parsing schema/instance JSON strings (for `new`, `validate_json`, and `validate_json_detailed`). Default: `128`. Use `0` for unlimited.
 
-#### `CompiledSchema:validate(instance_json_string) -> boolean`
+#### `CompiledSchema:validate(instance_table) -> boolean`
 
-Validates a Lua table (decoded JSON-like structure) against the compiled schema.
+Validates a Lua table (decoded JSON-like structure) against the compiled schema. Returns `true` if valid, `false` otherwise.
 
 Table conversion rules:
 
@@ -57,30 +63,57 @@ If conversion fails (for example, due to cycles, invalid key types, unsupported 
 
 #### `CompiledSchema:validate_json(instance_json_string) -> boolean`
 
-Parses and validates the JSON instance string against the compiled schema.
+Parses and validates the JSON instance string against the compiled schema. Returns `true` if valid, `false` otherwise.
 
-#### `CompiledSchema:validate_output(instance_json_string) -> string`
+#### `CompiledSchema:validate_detailed(instance_table) -> boolean, table`
 
-Validates a Lua table (decoded JSON-like structure) against the compiled schema, returning
-a JSON string containing the validation output in the JSON Schema "basic" output format.
+Validates a Lua table (decoded JSON-like structure) against the compiled schema with detailed reporting.
 
-#### `CompiledSchema:validate_output_json(instance_json_string) -> string`
+Returns two values:
+- **boolean**: `true` if validation passed, `false` if it failed
+- **table**: The complete validation output in the JSON Schema "basic" output format (as a Lua table)
 
-Parses and validates the JSON instance string against the compiled schema, returning
-a JSON string containing the validation output in the JSON Schema "basic" output format.
+Example usage:
+```lua
+local ok, report = schema:validate_detailed({ name = "Ada" })
+if not ok then
+  print("Validation failed!")
+  -- report contains detailed error information as a Lua table
+else
+  print("Validation passed!")
+end
+```
 
-#### `CompiledSchema:evaluate(instance_json_string) -> boolean`
+#### `CompiledSchema:validate_json_detailed(instance_json_string) -> boolean, table`
 
-Alias for `CompiledSchema:validate`.
+Parses and validates the JSON instance string against the compiled schema with detailed reporting.
 
-#### `luablaze.validate(compiled_schema, instance_json_string) -> boolean`
+Returns two values:
+- **boolean**: `true` if validation passed, `false` if it failed
+- **table**: The complete validation output in the JSON Schema "basic" output format (as a Lua table)
 
-Functional form of validation.
+#### `CompiledSchema:evaluate(instance_table) -> boolean`
+
+Alias for `CompiledSchema:validate`. Provided for compatibility.
+
+#### Module-level Functions
+
+The following module-level functions are also available as functional forms:
+
+- `luablaze.validate(compiled_schema, instance_table) -> boolean`
+- `luablaze.validate_json(compiled_schema, instance_json_string) -> boolean`
+- `luablaze.validate_detailed(compiled_schema, instance_table) -> boolean, table`
+- `luablaze.validate_json_detailed(compiled_schema, instance_json_string) -> boolean, table`
 
 ## Usage
 
 ```lua
 local luablaze = require("luablaze")
+
+-- Check module version
+print(luablaze._VERSION)        -- "1.0.0"
+print(luablaze._NAME)           -- "luablaze"
+print(luablaze._BLAZE_VERSION)  -- "0.0.1" (Sourcemeta Blaze library version)
 
 local schema = luablaze.new([[
   {
@@ -91,17 +124,27 @@ local schema = luablaze.new([[
   }
 ]])
 
+-- Simple boolean validation
 print(schema:validate({ name = "Ada" })) -- true
 print(schema:validate({ name = 123 })) -- false
-print(schema:validate_json([[{"name":"Ada"}]]) ) -- true
+print(schema:validate_json([[{"name":"Ada"}]])) -- true
 print(luablaze.validate(schema, { name = "Ada" })) -- true
+
+-- Validation with detailed output
+local ok, report = schema:validate_detailed({ name = 123 })
+if not ok then
+  print("Validation failed!")
+  -- report is a Lua table with detailed error information
+  print("Valid:", report.valid)
+  print("Errors:", report.errors)
+end
 ```
 
 Notes:
 
 - `luablaze.new` always takes a **schema JSON string** (parsed using `sourcemeta::core::parse_json`).
-- `CompiledSchema:validate`/`validate_output` take **Lua tables** (converted to a JSON value internally).
-- `CompiledSchema:validate_json`/`validate_output_json` take **instance JSON strings** (parsed using `sourcemeta::core::parse_json`).
+- `CompiledSchema:validate`/`validate_detailed` take **Lua tables** (converted to a JSON value internally).
+- `CompiledSchema:validate_json`/`validate_json_detailed` take **instance JSON strings** (parsed using `sourcemeta::core::parse_json`).
 - On parse/compile errors, the module raises a Lua error with the underlying C++ exception message.
 
 ## Building
@@ -146,6 +189,81 @@ From a git checkout:
 
 ```sh
 luarocks make
+```
+
+### Generate Documentation
+
+The project uses [Doxygen](https://www.doxygen.nl/) to generate API documentation from source code comments.
+
+#### Requirements
+
+- Doxygen (install with `brew install doxygen` on macOS, `apt-get install doxygen` on Ubuntu)
+- Graphviz (optional, for diagrams - `brew install graphviz` or `apt-get install graphviz`)
+
+#### Generate Docs
+
+```sh
+# Option 1: Using CMake
+mkdir -p build && cd build
+cmake .. -DLUABLAZE_BUILD_DOCS=ON
+make docs
+
+# Option 2: Using Doxygen directly
+doxygen Doxyfile
+```
+
+Documentation will be generated in the `docs/html/` directory. Open `docs/html/index.html` in your browser to view.
+
+#### Automating Documentation Updates
+
+To ensure documentation stays up-to-date with code changes, you can set up a pre-commit hook:
+
+**1. Create `.git/hooks/pre-commit`:**
+
+```bash
+#!/bin/bash
+# Pre-commit hook to generate documentation
+
+echo "Generating documentation..."
+if ! command -v doxygen &> /dev/null; then
+    echo "Warning: Doxygen not installed. Skipping documentation generation."
+    exit 0
+fi
+
+# Generate docs
+doxygen Doxyfile > /dev/null 2>&1
+
+if [ $? -eq 0 ]; then
+    echo "✓ Documentation generated successfully"
+else
+    echo "✗ Documentation generation failed"
+    exit 1
+fi
+
+# Optionally stage the generated docs (uncomment if you want to commit docs)
+# git add docs/
+
+exit 0
+```
+
+**2. Make it executable:**
+
+```sh
+chmod +x .git/hooks/pre-commit
+```
+
+**What this does:**
+- Runs automatically before each commit
+- Generates Doxygen documentation from source comments
+- Fails the commit if documentation generation fails
+- Optionally stages generated docs (uncomment `git add docs/` line)
+
+**Note:** The `docs/` directory is git-ignored by default. If you want to commit generated documentation, remove `docs/` from [.gitignore](.gitignore) and uncomment the `git add docs/` line in the hook.
+
+#### Clean Docs
+
+```sh
+rm -rf docs/
 ```
 
 If you have multiple rockspecs in the directory, run:
