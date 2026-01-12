@@ -292,6 +292,10 @@ struct CompiledSchema {
     std::string dialect_name;
 };
 
+struct CompiledSchemaUserdata {
+    CompiledSchema *ptr;
+};
+
 static bool lua_value_to_json(lua_State *L, int index, std::unordered_set<const void *> &seen,
                               const std::size_t max_array_length, const std::size_t max_recursion_depth,
                               std::size_t depth, sourcemeta::core::JSON &out, std::string &error);
@@ -403,6 +407,13 @@ static bool lua_table_to_json_abs(lua_State *L, const int abs_index, std::unorde
         return false;
     }
 
+    // Ensure we have enough Lua stack space for table iteration/conversion.
+    // Deeply nested tables can otherwise trigger undefined behavior.
+    if (!lua_checkstack(L, 8)) {
+        error = "Cannot grow Lua stack (stack overflow risk)";
+        return false;
+    }
+
     const void *ptr = lua_topointer(L, abs_index);
     if (ptr != nullptr) {
         if (seen.find(ptr) != seen.end()) {
@@ -459,6 +470,13 @@ static bool lua_table_to_json_abs(lua_State *L, const int abs_index, std::unorde
         }
         sourcemeta::core::JSON array{sourcemeta::core::JSON::Array{}};
         for (std::size_t i = 1; i <= max_index; i++) {
+            if (!lua_checkstack(L, 4)) {
+                error = "Cannot grow Lua stack (stack overflow risk)";
+                if (ptr != nullptr) {
+                    seen.erase(ptr);
+                }
+                return false;
+            }
             lua_rawgeti(L, abs_index, static_cast<lua_Integer>(i));
             sourcemeta::core::JSON element{nullptr};
             if (!lua_isnil(L, -1)) {
@@ -485,6 +503,14 @@ static bool lua_table_to_json_abs(lua_State *L, const int abs_index, std::unorde
     sourcemeta::core::JSON object{sourcemeta::core::JSON::Object{}};
     lua_pushnil(L);
     while (lua_next(L, abs_index) != 0) {
+        if (!lua_checkstack(L, 8)) {
+            lua_pop(L, 2);
+            error = "Cannot grow Lua stack (stack overflow risk)";
+            if (ptr != nullptr) {
+                seen.erase(ptr);
+            }
+            return false;
+        }
         if (lua_type(L, -2) != LUA_TSTRING) {
             const int key_type = lua_type(L, -2);
             lua_pop(L, 2);
@@ -608,16 +634,17 @@ static auto parse_json_with_depth_limit(const std::string_view input, const std:
 // Validate and extract a `CompiledSchema*` from a Lua userdata at `index`.
 // Raises a Lua error if the type does not match.
 static auto check_compiled_schema(lua_State *L, const int index) -> CompiledSchema * {
-    auto *ud = static_cast<CompiledSchema *>(luaL_checkudata(L, index, LUABLAZE_COMPILEDSCHEMA_MT));
-    luaL_argcheck(L, ud != nullptr, index, "CompiledSchema expected");
-    return ud;
+    auto *ud = static_cast<CompiledSchemaUserdata *>(luaL_checkudata(L, index, LUABLAZE_COMPILEDSCHEMA_MT));
+    luaL_argcheck(L, ud != nullptr && ud->ptr != nullptr, index, "CompiledSchema expected");
+    return ud->ptr;
 }
 
 // Lua GC metamethod: destroy the object stored inside the userdata.
 static int compiled_schema_gc(lua_State *L) {
-    auto *ud = static_cast<CompiledSchema *>(luaL_checkudata(L, 1, LUABLAZE_COMPILEDSCHEMA_MT));
-    if (ud != nullptr) {
-        ud->~CompiledSchema();
+    auto *ud = static_cast<CompiledSchemaUserdata *>(luaL_testudata(L, 1, LUABLAZE_COMPILEDSCHEMA_MT));
+    if (ud != nullptr && ud->ptr != nullptr) {
+        delete ud->ptr;
+        ud->ptr = nullptr;
     }
     return 0;
 }
@@ -909,11 +936,12 @@ static int luablaze_new(lua_State *L) {
             sourcemeta::blaze::compile(schema, sourcemeta::core::schema_walker, sourcemeta::core::schema_resolver,
                                        sourcemeta::blaze::default_schema_compiler, mode, default_dialect)};
 
-        auto *ud = static_cast<CompiledSchema *>(lua_newuserdata(L, sizeof(CompiledSchema)));
-        new (ud) CompiledSchema{schema_template,     sourcemeta::blaze::Evaluator{},
-                                max_array_length,    max_depth,
-                                max_recursion_depth, mode_name_ptr,
-                                dialect_name_str};
+        auto *ud = static_cast<CompiledSchemaUserdata *>(lua_newuserdata(L, sizeof(CompiledSchemaUserdata)));
+        ud->ptr  = nullptr;
+        ud->ptr  = new CompiledSchema{schema_template,     sourcemeta::blaze::Evaluator{},
+                                     max_array_length,    max_depth,
+                                     max_recursion_depth, mode_name_ptr,
+                                     dialect_name_str};
         luaL_getmetatable(L, LUABLAZE_COMPILEDSCHEMA_MT);
         lua_setmetatable(L, -2);
         return 1;
