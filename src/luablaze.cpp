@@ -802,9 +802,10 @@ static int compiled_schema_validate_detailed(lua_State *L) {
         const auto result{sourcemeta::blaze::standard(compiled->evaluator, compiled->schema_template, instance,
                                                       sourcemeta::blaze::StandardOutput::Basic)};
 
-        // Extract the "valid" field from the result
-        const bool is_valid =
-            result.defines("valid") && result.at("valid").is_boolean() ? result.at("valid").to_boolean() : false;
+        if (!result.defines("valid") || !result.at("valid").is_boolean()) {
+            throw std::runtime_error("Evaluation engine failed to produce a valid boolean outcome");
+        }
+        const bool is_valid = result.at("valid").to_boolean();
 
         lua_pushboolean(L, is_valid);
 
@@ -847,9 +848,10 @@ static int compiled_schema_validate_json_detailed(lua_State *L) {
         const auto result{sourcemeta::blaze::standard(compiled->evaluator, compiled->schema_template, instance,
                                                       sourcemeta::blaze::StandardOutput::Basic)};
 
-        // Extract the "valid" field from the result
-        const bool is_valid =
-            result.defines("valid") && result.at("valid").is_boolean() ? result.at("valid").to_boolean() : false;
+        if (!result.defines("valid") || !result.at("valid").is_boolean()) {
+            throw std::runtime_error("Evaluation engine failed to produce a valid boolean outcome");
+        }
+        const bool is_valid = result.at("valid").to_boolean();
 
         lua_pushboolean(L, is_valid);
 
