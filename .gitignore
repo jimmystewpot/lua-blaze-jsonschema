@@ -2,6 +2,8 @@ build/
 build.luarocks/
 Testing
 docs/
+docs/superpowers/
+.superpowers/
 .vscode/
 .idea/
 .cache/
