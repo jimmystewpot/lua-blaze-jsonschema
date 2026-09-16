@@ -607,28 +607,31 @@ static bool lua_value_to_json_abs(lua_State *L, const int abs_index, std::unorde
 static auto parse_json_with_depth_limit(const std::string_view input, const std::size_t max_depth)
     -> sourcemeta::core::JSON {
     if (max_depth == 0) {
-        return sourcemeta::core::parse_json(std::string{input});
+        return sourcemeta::core::parse_json(input);
     }
 
     std::size_t depth{0};
-    const sourcemeta::core::JSON::ParseCallback cb = [&](const sourcemeta::core::JSON::ParsePhase phase,
-                                                         const sourcemeta::core::JSON::Type type, const std::uint64_t,
-                                                         const std::uint64_t, const sourcemeta::core::JSON &) {
-        if (type == sourcemeta::core::JSON::Type::Array || type == sourcemeta::core::JSON::Type::Object) {
-            if (phase == sourcemeta::core::JSON::ParsePhase::Pre) {
-                depth++;
-                if (depth > max_depth) {
-                    throw std::runtime_error("JSON maximum nesting depth exceeded");
-                }
-            } else {
-                if (depth > 0) {
-                    depth--;
+    const sourcemeta::core::JSON::ParseCallback cb =
+        [&](const sourcemeta::core::JSON::ParsePhase phase, const sourcemeta::core::JSON::Type type,
+            const std::uint64_t, const std::uint64_t, const sourcemeta::core::JSON::ParseContext,
+            const std::size_t, const sourcemeta::core::JSON::String &) {
+            if (type == sourcemeta::core::JSON::Type::Array || type == sourcemeta::core::JSON::Type::Object) {
+                if (phase == sourcemeta::core::JSON::ParsePhase::Pre) {
+                    depth++;
+                    if (depth > max_depth) {
+                        throw std::runtime_error("JSON maximum nesting depth exceeded");
+                    }
+                } else {
+                    if (depth > 0) {
+                        depth--;
+                    }
                 }
             }
-        }
-    };
+        };
 
-    return sourcemeta::core::parse_json(std::string{input}, cb);
+    sourcemeta::core::JSON output{nullptr};
+    sourcemeta::core::parse_json(input, output, cb);
+    return output;
 }
 
 // Validate and extract a `CompiledSchema*` from a Lua userdata at `index`.
@@ -934,16 +937,16 @@ static int luablaze_new(lua_State *L) {
         const auto schema = parse_json_with_depth_limit(std::string_view{schema_str, schema_len}, max_depth);
         const auto schema_template{
             sourcemeta::blaze::compile(schema, sourcemeta::core::schema_walker, sourcemeta::core::schema_resolver,
-                                       sourcemeta::blaze::default_schema_compiler, mode, default_dialect)};
+                                       sourcemeta::blaze::default_schema_compiler, mode, default_dialect.value_or(""))};
 
         auto *ud = static_cast<CompiledSchemaUserdata *>(lua_newuserdata(L, sizeof(CompiledSchemaUserdata)));
         ud->ptr  = nullptr;
+        luaL_getmetatable(L, LUABLAZE_COMPILEDSCHEMA_MT);
+        lua_setmetatable(L, -2);
         ud->ptr  = new CompiledSchema{schema_template,     sourcemeta::blaze::Evaluator{},
                                      max_array_length,    max_depth,
                                      max_recursion_depth, mode_name_ptr,
                                      dialect_name_str};
-        luaL_getmetatable(L, LUABLAZE_COMPILEDSCHEMA_MT);
-        lua_setmetatable(L, -2);
         return 1;
     } catch (const std::exception &e) {
         return luaL_error(L, "%s", e.what());
