@@ -607,28 +607,31 @@ static bool lua_value_to_json_abs(lua_State *L, const int abs_index, std::unorde
 static auto parse_json_with_depth_limit(const std::string_view input, const std::size_t max_depth)
     -> sourcemeta::core::JSON {
     if (max_depth == 0) {
-        return sourcemeta::core::parse_json(std::string{input});
+        return sourcemeta::core::parse_json(input);
     }
 
     std::size_t depth{0};
-    const sourcemeta::core::JSON::ParseCallback cb = [&](const sourcemeta::core::JSON::ParsePhase phase,
-                                                         const sourcemeta::core::JSON::Type type, const std::uint64_t,
-                                                         const std::uint64_t, const sourcemeta::core::JSON &) {
-        if (type == sourcemeta::core::JSON::Type::Array || type == sourcemeta::core::JSON::Type::Object) {
-            if (phase == sourcemeta::core::JSON::ParsePhase::Pre) {
-                depth++;
-                if (depth > max_depth) {
-                    throw std::runtime_error("JSON maximum nesting depth exceeded");
-                }
-            } else {
-                if (depth > 0) {
-                    depth--;
+    const sourcemeta::core::JSON::ParseCallback cb =
+        [&](const sourcemeta::core::JSON::ParsePhase phase, const sourcemeta::core::JSON::Type type,
+            const std::uint64_t, const std::uint64_t, const sourcemeta::core::JSON::ParseContext,
+            const std::size_t, const sourcemeta::core::JSON::String &) {
+            if (type == sourcemeta::core::JSON::Type::Array || type == sourcemeta::core::JSON::Type::Object) {
+                if (phase == sourcemeta::core::JSON::ParsePhase::Pre) {
+                    depth++;
+                    if (depth > max_depth) {
+                        throw std::runtime_error("JSON maximum nesting depth exceeded");
+                    }
+                } else {
+                    if (depth > 0) {
+                        depth--;
+                    }
                 }
             }
-        }
-    };
+        };
 
-    return sourcemeta::core::parse_json(std::string{input}, cb);
+    sourcemeta::core::JSON output{nullptr};
+    sourcemeta::core::parse_json(input, output, cb);
+    return output;
 }
 
 // Validate and extract a `CompiledSchema*` from a Lua userdata at `index`.
@@ -716,6 +719,7 @@ static int compiled_schema_validate(lua_State *L) {
     auto *compiled = check_compiled_schema(L, 1);
     luaL_checktype(L, 2, LUA_TTABLE);
 
+    std::string error_msg;
     try {
         std::unordered_set<const void *> seen;
         seen.reserve(32);
@@ -729,10 +733,11 @@ static int compiled_schema_validate(lua_State *L) {
         lua_pushboolean(L, result);
         return 1;
     } catch (const std::exception &e) {
-        return luaL_error(L, "%s", e.what());
+        error_msg = e.what();
     } catch (...) {
-        return luaL_error(L, "unknown error");
+        error_msg = "unknown error";
     }
+    return luaL_error(L, "%s", error_msg.c_str());
 }
 
 /**
@@ -752,6 +757,7 @@ static int compiled_schema_validate_json(lua_State *L) {
     std::size_t instance_len{0};
     const char *instance_str = luaL_checklstring(L, 2, &instance_len);
 
+    std::string error_msg;
     try {
         const auto instance =
             parse_json_with_depth_limit(std::string_view{instance_str, instance_len}, compiled->max_depth);
@@ -759,10 +765,11 @@ static int compiled_schema_validate_json(lua_State *L) {
         lua_pushboolean(L, result);
         return 1;
     } catch (const std::exception &e) {
-        return luaL_error(L, "%s", e.what());
+        error_msg = e.what();
     } catch (...) {
-        return luaL_error(L, "unknown error");
+        error_msg = "unknown error";
     }
+    return luaL_error(L, "%s", error_msg.c_str());
 }
 
 /**
@@ -782,6 +789,7 @@ static int compiled_schema_validate_detailed(lua_State *L) {
     auto *compiled = check_compiled_schema(L, 1);
     luaL_checktype(L, 2, LUA_TTABLE);
 
+    std::string error_msg;
     try {
         std::unordered_set<const void *> seen;
         seen.reserve(32);
@@ -794,9 +802,10 @@ static int compiled_schema_validate_detailed(lua_State *L) {
         const auto result{sourcemeta::blaze::standard(compiled->evaluator, compiled->schema_template, instance,
                                                       sourcemeta::blaze::StandardOutput::Basic)};
 
-        // Extract the "valid" field from the result
-        const bool is_valid =
-            result.defines("valid") && result.at("valid").is_boolean() ? result.at("valid").to_boolean() : false;
+        if (!result.defines("valid") || !result.at("valid").is_boolean()) {
+            throw std::runtime_error("Evaluation engine failed to produce a valid boolean outcome");
+        }
+        const bool is_valid = result.at("valid").to_boolean();
 
         lua_pushboolean(L, is_valid);
 
@@ -807,10 +816,11 @@ static int compiled_schema_validate_detailed(lua_State *L) {
 
         return 2; // Return (boolean, table)
     } catch (const std::exception &e) {
-        return luaL_error(L, "%s", e.what());
+        error_msg = e.what();
     } catch (...) {
-        return luaL_error(L, "unknown error");
+        error_msg = "unknown error";
     }
+    return luaL_error(L, "%s", error_msg.c_str());
 }
 
 /**
@@ -831,15 +841,17 @@ static int compiled_schema_validate_json_detailed(lua_State *L) {
     std::size_t instance_len{0};
     const char *instance_str = luaL_checklstring(L, 2, &instance_len);
 
+    std::string error_msg;
     try {
         const auto instance =
             parse_json_with_depth_limit(std::string_view{instance_str, instance_len}, compiled->max_depth);
         const auto result{sourcemeta::blaze::standard(compiled->evaluator, compiled->schema_template, instance,
                                                       sourcemeta::blaze::StandardOutput::Basic)};
 
-        // Extract the "valid" field from the result
-        const bool is_valid =
-            result.defines("valid") && result.at("valid").is_boolean() ? result.at("valid").to_boolean() : false;
+        if (!result.defines("valid") || !result.at("valid").is_boolean()) {
+            throw std::runtime_error("Evaluation engine failed to produce a valid boolean outcome");
+        }
+        const bool is_valid = result.at("valid").to_boolean();
 
         lua_pushboolean(L, is_valid);
 
@@ -851,10 +863,11 @@ static int compiled_schema_validate_json_detailed(lua_State *L) {
 
         return 2; // Return (boolean, table)
     } catch (const std::exception &e) {
-        return luaL_error(L, "%s", e.what());
+        error_msg = e.what();
     } catch (...) {
-        return luaL_error(L, "unknown error");
+        error_msg = "unknown error";
     }
+    return luaL_error(L, "%s", error_msg.c_str());
 }
 
 /**
@@ -900,13 +913,14 @@ static int luablaze_new(lua_State *L) {
         return luaL_error(L, "schema cannot be empty");
     }
 
-    std::optional<std::string> default_dialect{std::nullopt};
-    sourcemeta::blaze::Mode mode{sourcemeta::blaze::Mode::FastValidation};
-    std::size_t max_array_length{LUABLAZE_DEFAULT_MAX_ARRAY_LENGTH};
-    std::size_t max_depth{LUABLAZE_DEFAULT_MAX_DEPTH};
-    std::size_t max_recursion_depth{LUABLAZE_DEFAULT_MAX_RECURSION_DEPTH};
-
+    std::string error_msg;
     try {
+        std::optional<std::string> default_dialect{std::nullopt};
+        sourcemeta::blaze::Mode mode{sourcemeta::blaze::Mode::FastValidation};
+        std::size_t max_array_length{LUABLAZE_DEFAULT_MAX_ARRAY_LENGTH};
+        std::size_t max_depth{LUABLAZE_DEFAULT_MAX_DEPTH};
+        std::size_t max_recursion_depth{LUABLAZE_DEFAULT_MAX_RECURSION_DEPTH};
+
         // Supported call patterns:
         //   new(schema)
         //   new(schema, { dialect = "draft7", mode = "Exhaustive" })
@@ -934,22 +948,23 @@ static int luablaze_new(lua_State *L) {
         const auto schema = parse_json_with_depth_limit(std::string_view{schema_str, schema_len}, max_depth);
         const auto schema_template{
             sourcemeta::blaze::compile(schema, sourcemeta::core::schema_walker, sourcemeta::core::schema_resolver,
-                                       sourcemeta::blaze::default_schema_compiler, mode, default_dialect)};
+                                       sourcemeta::blaze::default_schema_compiler, mode, default_dialect.value_or(""))};
 
         auto *ud = static_cast<CompiledSchemaUserdata *>(lua_newuserdata(L, sizeof(CompiledSchemaUserdata)));
         ud->ptr  = nullptr;
+        luaL_getmetatable(L, LUABLAZE_COMPILEDSCHEMA_MT);
+        lua_setmetatable(L, -2);
         ud->ptr  = new CompiledSchema{schema_template,     sourcemeta::blaze::Evaluator{},
                                      max_array_length,    max_depth,
                                      max_recursion_depth, mode_name_ptr,
                                      dialect_name_str};
-        luaL_getmetatable(L, LUABLAZE_COMPILEDSCHEMA_MT);
-        lua_setmetatable(L, -2);
         return 1;
     } catch (const std::exception &e) {
-        return luaL_error(L, "%s", e.what());
+        error_msg = e.what();
     } catch (...) {
-        return luaL_error(L, "unknown error");
+        error_msg = "unknown error";
     }
+    return luaL_error(L, "%s", error_msg.c_str());
 }
 
 // Implements `luablaze.validate(compiled_schema, instance_table)`.

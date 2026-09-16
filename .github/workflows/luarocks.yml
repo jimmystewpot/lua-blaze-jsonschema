@@ -1,0 +1,110 @@
+name: Publish to LuaRocks
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target to publish'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - scm
+      version:
+        description: 'Release version/tag (e.g. v0.1.0 or 0.1.0). Ignored if target is scm.'
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        description: 'Dry run (lint and inspect without uploading)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish Rockspec
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Lua and LuaRocks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.4 luarocks lua5.4-dev
+
+      - name: Prepare Rockspec
+        id: prepare
+        run: |
+          set -euo pipefail
+
+          TARGET="${{ inputs.target || 'release' }}"
+          DRY_RUN="${{ inputs.dry_run || 'false' }}"
+
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+            TARGET="release"
+          elif [ "$TARGET" = "release" ]; then
+            TAG="${{ inputs.version }}"
+            if [ -z "$TAG" ]; then
+              # Default to latest git tag if none provided
+              TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+              if [ -z "$TAG" ]; then
+                echo "::error::Release version/tag is required when publishing a release."
+                exit 1
+              fi
+            fi
+          fi
+
+          if [ "$TARGET" = "scm" ]; then
+            ROCKSPEC="luablaze-scm-1.rockspec"
+            echo "Publishing development rockspec: $ROCKSPEC"
+          else
+            VERSION="${TAG#v}"
+            ROCKSPEC_VER="${VERSION}-1"
+            ROCKSPEC="luablaze-${ROCKSPEC_VER}.rockspec"
+            echo "Generating release rockspec: $ROCKSPEC for tag $TAG"
+
+            sed -e "s/version = \"scm-1\"/version = \"${ROCKSPEC_VER}\"/" \
+                -e "s|url = \"git+https://github.com/jimmystewpot/lua-blaze-jsonschema.git\"|url = \"git+https://github.com/jimmystewpot/lua-blaze-jsonschema.git\",\n   tag = \"${TAG}\"|" \
+                luablaze-scm-1.rockspec > "$ROCKSPEC"
+          fi
+
+          echo "rockspec=${ROCKSPEC}" >> "$GITHUB_OUTPUT"
+          echo "dry_run=${DRY_RUN}" >> "$GITHUB_OUTPUT"
+
+          echo "Generated Rockspec content:"
+          cat "$ROCKSPEC"
+
+      - name: Lint Rockspec
+        run: |
+          luarocks lint "${{ steps.prepare.outputs.rockspec }}"
+
+      - name: Upload to LuaRocks
+        env:
+          LUAROCKS_API_KEY: ${{ secrets.LUAROCKS }}
+          ROCKSPEC: ${{ steps.prepare.outputs.rockspec }}
+          DRY_RUN: ${{ steps.prepare.outputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run enabled. Skipping upload for $ROCKSPEC."
+            exit 0
+          fi
+
+          if [ -z "$LUAROCKS_API_KEY" ]; then
+            echo "::error::LUAROCKS repository secret is not set."
+            exit 1
+          fi
+
+          echo "Uploading $ROCKSPEC to LuaRocks..."
+          luarocks upload --skip-pack "$ROCKSPEC" --api-key="$LUAROCKS_API_KEY"
+          echo "Successfully published $ROCKSPEC to LuaRocks!"

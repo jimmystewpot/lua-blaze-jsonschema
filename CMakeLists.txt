@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 project(luablaze)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(CTest)
@@ -9,6 +9,7 @@ include(CTest)
 option(LUABLAZE_INIT_SUBMODULES "Initialize git submodules during CMake configure" ON)
 option(LUABLAZE_REQUIRE_TEST_SUITE "Require the JSON-Schema-Test-Suite submodule to be present" ${BUILD_TESTING})
 option(LUABLAZE_BUILD_DOCS "Build documentation using Doxygen" OFF)
+option(LUABLAZE_ENABLE_COVERAGE "Enable code coverage instrumentation" OFF)
 
 if(LUABLAZE_INIT_SUBMODULES)
   find_package(Git QUIET)
@@ -171,6 +172,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_link_options(blaze PRIVATE
     $<$<CONFIG:Release>:-flto=auto> # LTO at link time
   )
+endif()
+
+if(LUABLAZE_ENABLE_COVERAGE)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    message(STATUS "Enabling code coverage instrumentation for luablaze")
+    target_compile_options(blaze PRIVATE --coverage -O0 -g)
+    target_link_options(blaze PRIVATE --coverage)
+  endif()
 endif()
 
 # Symbol visibility for shared library exports
