@@ -115,3 +115,50 @@ jobs:
           busted --cpath=./build/?.so --lua=/usr/bin/lua${{ steps.version.outputs.lua_version }} --verbose spec/configurable_recursion_spec.lua
           busted --cpath=./build/?.so --lua=/usr/bin/lua${{ steps.version.outputs.lua_version }} --verbose spec/overflow_protection_spec.lua
           busted --cpath=./build/?.so --lua=/usr/bin/lua${{ steps.version.outputs.lua_version }} --verbose spec/recursion_limits_spec.lua
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Ensure submodules are present
+        run: |
+          git submodule update --init --recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreadline-dev libpcre2-dev cmake build-essential lua5.4 luarocks lua5.4-dev lcov
+
+      - name: Install test dependencies
+        run: |
+          sudo -E luarocks --lua-version=5.4 install busted
+          sudo -E luarocks --lua-version=5.4 install dkjson
+          sudo -E luarocks --lua-version=5.4 install lrexlib-pcre2
+          sudo -E luarocks --lua-version=5.4 install lua-schema
+
+      - name: Build with Coverage
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DLUABLAZE_ENABLE_COVERAGE=ON
+          cmake --build build --parallel
+
+      - name: Run Test Suite
+        run: |
+          busted --cpath=./build/?.so --lua=/usr/bin/lua5.4 spec/
+
+      - name: Generate Coverage Report
+        run: |
+          lcov --capture --directory build --output-file coverage.raw --ignore-errors mismatch,gcov,inconsistent 2>/dev/null || lcov --capture --directory build --output-file coverage.raw
+          lcov --extract coverage.raw "*/src/*" --output-file coverage.info --ignore-errors mismatch,gcov,inconsistent 2>/dev/null || lcov --extract coverage.raw "*/src/*" --output-file coverage.info
+          lcov --list coverage.info 2>/dev/null || true
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.info
+          fail_ci_if_error: false

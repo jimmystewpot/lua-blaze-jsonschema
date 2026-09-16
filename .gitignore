@@ -1,5 +1,10 @@
-build/
+build*/
 build.luarocks/
+*.gcov
+*.gcda
+*.gcno
+coverage*.info
+coverage*.raw
 Testing
 docs/
 docs/superpowers/
