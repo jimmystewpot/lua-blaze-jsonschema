@@ -719,6 +719,7 @@ static int compiled_schema_validate(lua_State *L) {
     auto *compiled = check_compiled_schema(L, 1);
     luaL_checktype(L, 2, LUA_TTABLE);
 
+    std::string error_msg;
     try {
         std::unordered_set<const void *> seen;
         seen.reserve(32);
@@ -732,10 +733,11 @@ static int compiled_schema_validate(lua_State *L) {
         lua_pushboolean(L, result);
         return 1;
     } catch (const std::exception &e) {
-        return luaL_error(L, "%s", e.what());
+        error_msg = e.what();
     } catch (...) {
-        return luaL_error(L, "unknown error");
+        error_msg = "unknown error";
     }
+    return luaL_error(L, "%s", error_msg.c_str());
 }
 
 /**
@@ -755,6 +757,7 @@ static int compiled_schema_validate_json(lua_State *L) {
     std::size_t instance_len{0};
     const char *instance_str = luaL_checklstring(L, 2, &instance_len);
 
+    std::string error_msg;
     try {
         const auto instance =
             parse_json_with_depth_limit(std::string_view{instance_str, instance_len}, compiled->max_depth);
@@ -762,10 +765,11 @@ static int compiled_schema_validate_json(lua_State *L) {
         lua_pushboolean(L, result);
         return 1;
     } catch (const std::exception &e) {
-        return luaL_error(L, "%s", e.what());
+        error_msg = e.what();
     } catch (...) {
-        return luaL_error(L, "unknown error");
+        error_msg = "unknown error";
     }
+    return luaL_error(L, "%s", error_msg.c_str());
 }
 
 /**
@@ -785,6 +789,7 @@ static int compiled_schema_validate_detailed(lua_State *L) {
     auto *compiled = check_compiled_schema(L, 1);
     luaL_checktype(L, 2, LUA_TTABLE);
 
+    std::string error_msg;
     try {
         std::unordered_set<const void *> seen;
         seen.reserve(32);
@@ -810,10 +815,11 @@ static int compiled_schema_validate_detailed(lua_State *L) {
 
         return 2; // Return (boolean, table)
     } catch (const std::exception &e) {
-        return luaL_error(L, "%s", e.what());
+        error_msg = e.what();
     } catch (...) {
-        return luaL_error(L, "unknown error");
+        error_msg = "unknown error";
     }
+    return luaL_error(L, "%s", error_msg.c_str());
 }
 
 /**
@@ -834,6 +840,7 @@ static int compiled_schema_validate_json_detailed(lua_State *L) {
     std::size_t instance_len{0};
     const char *instance_str = luaL_checklstring(L, 2, &instance_len);
 
+    std::string error_msg;
     try {
         const auto instance =
             parse_json_with_depth_limit(std::string_view{instance_str, instance_len}, compiled->max_depth);
@@ -854,10 +861,11 @@ static int compiled_schema_validate_json_detailed(lua_State *L) {
 
         return 2; // Return (boolean, table)
     } catch (const std::exception &e) {
-        return luaL_error(L, "%s", e.what());
+        error_msg = e.what();
     } catch (...) {
-        return luaL_error(L, "unknown error");
+        error_msg = "unknown error";
     }
+    return luaL_error(L, "%s", error_msg.c_str());
 }
 
 /**
@@ -903,13 +911,14 @@ static int luablaze_new(lua_State *L) {
         return luaL_error(L, "schema cannot be empty");
     }
 
-    std::optional<std::string> default_dialect{std::nullopt};
-    sourcemeta::blaze::Mode mode{sourcemeta::blaze::Mode::FastValidation};
-    std::size_t max_array_length{LUABLAZE_DEFAULT_MAX_ARRAY_LENGTH};
-    std::size_t max_depth{LUABLAZE_DEFAULT_MAX_DEPTH};
-    std::size_t max_recursion_depth{LUABLAZE_DEFAULT_MAX_RECURSION_DEPTH};
-
+    std::string error_msg;
     try {
+        std::optional<std::string> default_dialect{std::nullopt};
+        sourcemeta::blaze::Mode mode{sourcemeta::blaze::Mode::FastValidation};
+        std::size_t max_array_length{LUABLAZE_DEFAULT_MAX_ARRAY_LENGTH};
+        std::size_t max_depth{LUABLAZE_DEFAULT_MAX_DEPTH};
+        std::size_t max_recursion_depth{LUABLAZE_DEFAULT_MAX_RECURSION_DEPTH};
+
         // Supported call patterns:
         //   new(schema)
         //   new(schema, { dialect = "draft7", mode = "Exhaustive" })
@@ -949,10 +958,11 @@ static int luablaze_new(lua_State *L) {
                                      dialect_name_str};
         return 1;
     } catch (const std::exception &e) {
-        return luaL_error(L, "%s", e.what());
+        error_msg = e.what();
     } catch (...) {
-        return luaL_error(L, "unknown error");
+        error_msg = "unknown error";
     }
+    return luaL_error(L, "%s", error_msg.c_str());
 }
 
 // Implements `luablaze.validate(compiled_schema, instance_table)`.
