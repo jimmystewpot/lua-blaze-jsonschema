@@ -22,7 +22,7 @@ build: configure
 	$(CMAKE) --build $(BUILD_DIR) --parallel $(NPROC)
 
 test: build
-	$(CTEST) --test-dir $(BUILD_DIR)
+	busted --cpath=./$(BUILD_DIR)/?.so spec/
 
 clean:
 	$(CMAKE) --build $(BUILD_DIR) --target clean || true
