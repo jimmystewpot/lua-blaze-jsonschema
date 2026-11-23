@@ -11,6 +11,8 @@
 #include <sourcemeta/blaze/output_standard.h>
 
 #include <cmath>
+#include <cstddef>
+#include <cstdio>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -703,6 +705,10 @@ static int compiled_schema_info(lua_State *L) {
     return 1;
 }
 
+static void copy_error_message(char *buf, const std::size_t buf_size, const char *msg) noexcept {
+    std::snprintf(buf, buf_size, "%s", msg != nullptr ? msg : "Unknown error");
+}
+
 /**
  * @brief Validate a Lua table against the compiled schema (simple boolean result).
  *
@@ -719,25 +725,33 @@ static int compiled_schema_validate(lua_State *L) {
     auto *compiled = check_compiled_schema(L, 1);
     luaL_checktype(L, 2, LUA_TTABLE);
 
-    std::string error_msg;
-    try {
-        std::unordered_set<const void *> seen;
-        seen.reserve(32);
-        sourcemeta::core::JSON instance{nullptr};
-        std::string error;
-        if (!lua_value_to_json(L, 2, seen, compiled->max_array_length, compiled->max_recursion_depth, 0, instance,
-                               error)) {
-            throw std::runtime_error(error);
+    char err_buf[1024]{};
+    bool has_error = false;
+    bool result    = false;
+    {
+        try {
+            std::unordered_set<const void *> seen;
+            seen.reserve(32);
+            sourcemeta::core::JSON instance{nullptr};
+            std::string error;
+            if (!lua_value_to_json(L, 2, seen, compiled->max_array_length, compiled->max_recursion_depth, 0, instance,
+                                   error)) {
+                throw std::runtime_error(error);
+            }
+            result = compiled->evaluator.validate(compiled->schema_template, instance);
+        } catch (const std::exception &e) {
+            copy_error_message(err_buf, sizeof(err_buf), e.what());
+            has_error = true;
+        } catch (...) {
+            copy_error_message(err_buf, sizeof(err_buf), "Unknown C++ exception");
+            has_error = true;
         }
-        const bool result = compiled->evaluator.validate(compiled->schema_template, instance);
-        lua_pushboolean(L, result);
-        return 1;
-    } catch (const std::exception &e) {
-        error_msg = e.what();
-    } catch (...) {
-        error_msg = "unknown error";
     }
-    return luaL_error(L, "%s", error_msg.c_str());
+    if (has_error) {
+        return luaL_error(L, "%s", err_buf);
+    }
+    lua_pushboolean(L, result);
+    return 1;
 }
 
 /**
@@ -757,19 +771,27 @@ static int compiled_schema_validate_json(lua_State *L) {
     std::size_t instance_len{0};
     const char *instance_str = luaL_checklstring(L, 2, &instance_len);
 
-    std::string error_msg;
-    try {
-        const auto instance =
-            parse_json_with_depth_limit(std::string_view{instance_str, instance_len}, compiled->max_depth);
-        const bool result = compiled->evaluator.validate(compiled->schema_template, instance);
-        lua_pushboolean(L, result);
-        return 1;
-    } catch (const std::exception &e) {
-        error_msg = e.what();
-    } catch (...) {
-        error_msg = "unknown error";
+    char err_buf[1024]{};
+    bool has_error = false;
+    bool result    = false;
+    {
+        try {
+            const auto instance =
+                parse_json_with_depth_limit(std::string_view{instance_str, instance_len}, compiled->max_depth);
+            result = compiled->evaluator.validate(compiled->schema_template, instance);
+        } catch (const std::exception &e) {
+            copy_error_message(err_buf, sizeof(err_buf), e.what());
+            has_error = true;
+        } catch (...) {
+            copy_error_message(err_buf, sizeof(err_buf), "Unknown C++ exception");
+            has_error = true;
+        }
     }
-    return luaL_error(L, "%s", error_msg.c_str());
+    if (has_error) {
+        return luaL_error(L, "%s", err_buf);
+    }
+    lua_pushboolean(L, result);
+    return 1;
 }
 
 /**
@@ -789,38 +811,44 @@ static int compiled_schema_validate_detailed(lua_State *L) {
     auto *compiled = check_compiled_schema(L, 1);
     luaL_checktype(L, 2, LUA_TTABLE);
 
-    std::string error_msg;
-    try {
-        std::unordered_set<const void *> seen;
-        seen.reserve(32);
-        sourcemeta::core::JSON instance{nullptr};
-        std::string error;
-        if (!lua_value_to_json(L, 2, seen, compiled->max_array_length, compiled->max_recursion_depth, 0, instance,
-                               error)) {
-            throw std::runtime_error(error);
+    char err_buf[1024]{};
+    bool has_error = false;
+    {
+        try {
+            std::unordered_set<const void *> seen;
+            seen.reserve(32);
+            sourcemeta::core::JSON instance{nullptr};
+            std::string error;
+            if (!lua_value_to_json(L, 2, seen, compiled->max_array_length, compiled->max_recursion_depth, 0, instance,
+                                   error)) {
+                throw std::runtime_error(error);
+            }
+            const auto result{sourcemeta::blaze::standard(compiled->evaluator, compiled->schema_template, instance,
+                                                          sourcemeta::blaze::StandardOutput::Basic)};
+
+            if (!result.defines("valid") || !result.at("valid").is_boolean()) {
+                throw std::runtime_error("Evaluation engine failed to produce a valid boolean outcome");
+            }
+            const bool is_valid = result.at("valid").to_boolean();
+
+            lua_pushboolean(L, is_valid);
+
+            // Convert the full result to a Lua table for detailed reporting
+            if (!json_to_lua_value(L, result, compiled->max_recursion_depth, 0, error)) {
+                throw std::runtime_error(error);
+            }
+        } catch (const std::exception &e) {
+            copy_error_message(err_buf, sizeof(err_buf), e.what());
+            has_error = true;
+        } catch (...) {
+            copy_error_message(err_buf, sizeof(err_buf), "Unknown C++ exception");
+            has_error = true;
         }
-        const auto result{sourcemeta::blaze::standard(compiled->evaluator, compiled->schema_template, instance,
-                                                      sourcemeta::blaze::StandardOutput::Basic)};
-
-        if (!result.defines("valid") || !result.at("valid").is_boolean()) {
-            throw std::runtime_error("Evaluation engine failed to produce a valid boolean outcome");
-        }
-        const bool is_valid = result.at("valid").to_boolean();
-
-        lua_pushboolean(L, is_valid);
-
-        // Convert the full result to a Lua table for detailed reporting
-        if (!json_to_lua_value(L, result, compiled->max_recursion_depth, 0, error)) {
-            throw std::runtime_error(error);
-        }
-
-        return 2; // Return (boolean, table)
-    } catch (const std::exception &e) {
-        error_msg = e.what();
-    } catch (...) {
-        error_msg = "unknown error";
     }
-    return luaL_error(L, "%s", error_msg.c_str());
+    if (has_error) {
+        return luaL_error(L, "%s", err_buf);
+    }
+    return 2; // Return (boolean, table)
 }
 
 /**
@@ -841,33 +869,39 @@ static int compiled_schema_validate_json_detailed(lua_State *L) {
     std::size_t instance_len{0};
     const char *instance_str = luaL_checklstring(L, 2, &instance_len);
 
-    std::string error_msg;
-    try {
-        const auto instance =
-            parse_json_with_depth_limit(std::string_view{instance_str, instance_len}, compiled->max_depth);
-        const auto result{sourcemeta::blaze::standard(compiled->evaluator, compiled->schema_template, instance,
-                                                      sourcemeta::blaze::StandardOutput::Basic)};
+    char err_buf[1024]{};
+    bool has_error = false;
+    {
+        try {
+            const auto instance =
+                parse_json_with_depth_limit(std::string_view{instance_str, instance_len}, compiled->max_depth);
+            const auto result{sourcemeta::blaze::standard(compiled->evaluator, compiled->schema_template, instance,
+                                                          sourcemeta::blaze::StandardOutput::Basic)};
 
-        if (!result.defines("valid") || !result.at("valid").is_boolean()) {
-            throw std::runtime_error("Evaluation engine failed to produce a valid boolean outcome");
+            if (!result.defines("valid") || !result.at("valid").is_boolean()) {
+                throw std::runtime_error("Evaluation engine failed to produce a valid boolean outcome");
+            }
+            const bool is_valid = result.at("valid").to_boolean();
+
+            lua_pushboolean(L, is_valid);
+
+            // Convert the full result to a Lua table for detailed reporting
+            std::string error;
+            if (!json_to_lua_value(L, result, compiled->max_recursion_depth, 0, error)) {
+                throw std::runtime_error(error);
+            }
+        } catch (const std::exception &e) {
+            copy_error_message(err_buf, sizeof(err_buf), e.what());
+            has_error = true;
+        } catch (...) {
+            copy_error_message(err_buf, sizeof(err_buf), "Unknown C++ exception");
+            has_error = true;
         }
-        const bool is_valid = result.at("valid").to_boolean();
-
-        lua_pushboolean(L, is_valid);
-
-        // Convert the full result to a Lua table for detailed reporting
-        std::string error;
-        if (!json_to_lua_value(L, result, compiled->max_recursion_depth, 0, error)) {
-            throw std::runtime_error(error);
-        }
-
-        return 2; // Return (boolean, table)
-    } catch (const std::exception &e) {
-        error_msg = e.what();
-    } catch (...) {
-        error_msg = "unknown error";
     }
-    return luaL_error(L, "%s", error_msg.c_str());
+    if (has_error) {
+        return luaL_error(L, "%s", err_buf);
+    }
+    return 2; // Return (boolean, table)
 }
 
 /**
@@ -906,6 +940,7 @@ static int compiled_schema_evaluate(lua_State *L) {
  * @endcode
  */
 static int luablaze_new(lua_State *L) {
+    const int nargs = lua_gettop(L);
     std::size_t schema_len{0};
     const char *schema_str = luaL_checklstring(L, 1, &schema_len);
 
@@ -913,58 +948,66 @@ static int luablaze_new(lua_State *L) {
         return luaL_error(L, "schema cannot be empty");
     }
 
-    std::string error_msg;
-    try {
-        std::optional<std::string> default_dialect{std::nullopt};
-        sourcemeta::blaze::Mode mode{sourcemeta::blaze::Mode::FastValidation};
-        std::size_t max_array_length{LUABLAZE_DEFAULT_MAX_ARRAY_LENGTH};
-        std::size_t max_depth{LUABLAZE_DEFAULT_MAX_DEPTH};
-        std::size_t max_recursion_depth{LUABLAZE_DEFAULT_MAX_RECURSION_DEPTH};
+    auto *ud = static_cast<CompiledSchemaUserdata *>(lua_newuserdata(L, sizeof(CompiledSchemaUserdata)));
+    ud->ptr  = nullptr;
+    luaL_getmetatable(L, LUABLAZE_COMPILEDSCHEMA_MT);
+    lua_setmetatable(L, -2);
 
-        // Supported call patterns:
-        //   new(schema)
-        //   new(schema, { dialect = "draft7", mode = "Exhaustive" })
-        //
-        // NOTE: Positional dialect arguments are not supported.
-        if (!lua_isnoneornil(L, 2)) {
-            if (lua_type(L, 2) != LUA_TTABLE) {
-                throw std::runtime_error("options_table must be a table");
+    char err_buf[1024]{};
+    bool has_error = false;
+    {
+        try {
+            std::optional<std::string> default_dialect{std::nullopt};
+            sourcemeta::blaze::Mode mode{sourcemeta::blaze::Mode::FastValidation};
+            std::size_t max_array_length{LUABLAZE_DEFAULT_MAX_ARRAY_LENGTH};
+            std::size_t max_depth{LUABLAZE_DEFAULT_MAX_DEPTH};
+            std::size_t max_recursion_depth{LUABLAZE_DEFAULT_MAX_RECURSION_DEPTH};
+
+            // Supported call patterns:
+            //   new(schema)
+            //   new(schema, { dialect = "draft7", mode = "Exhaustive" })
+            //
+            // NOTE: Positional dialect arguments are not supported.
+            if (nargs >= 2 && !lua_isnil(L, 2)) {
+                if (lua_type(L, 2) != LUA_TTABLE) {
+                    throw std::runtime_error("options_table must be a table");
+                }
+                std::string options_error;
+                if (!parse_options_table(L, 2, mode, default_dialect, max_array_length, max_depth, max_recursion_depth,
+                                         options_error)) {
+                    throw std::runtime_error(options_error);
+                }
             }
-            std::string options_error;
-            if (!parse_options_table(L, 2, mode, default_dialect, max_array_length, max_depth, max_recursion_depth,
-                                     options_error)) {
-                throw std::runtime_error(options_error);
+
+            if (nargs >= 3 && !lua_isnil(L, 3)) {
+                throw std::runtime_error("luablaze.new expects (schema_json) or (schema_json, options_table)");
             }
+
+            // Capture mode and dialect names for introspection
+            const char *mode_name_ptr = (mode == sourcemeta::blaze::Mode::FastValidation) ? "Fast" : "Exhaustive";
+            const std::string dialect_name_str = default_dialect.value_or("auto");
+
+            const auto schema = parse_json_with_depth_limit(std::string_view{schema_str, schema_len}, max_depth);
+            const auto schema_template{sourcemeta::blaze::compile(
+                schema, sourcemeta::core::schema_walker, sourcemeta::core::schema_resolver,
+                sourcemeta::blaze::default_schema_compiler, mode, default_dialect.value_or(""))};
+
+            ud->ptr = new CompiledSchema{schema_template,     sourcemeta::blaze::Evaluator{},
+                                         max_array_length,    max_depth,
+                                         max_recursion_depth, mode_name_ptr,
+                                         dialect_name_str};
+        } catch (const std::exception &e) {
+            copy_error_message(err_buf, sizeof(err_buf), e.what());
+            has_error = true;
+        } catch (...) {
+            copy_error_message(err_buf, sizeof(err_buf), "Unknown C++ exception");
+            has_error = true;
         }
-
-        if (!lua_isnoneornil(L, 3)) {
-            throw std::runtime_error("luablaze.new expects (schema_json) or (schema_json, options_table)");
-        }
-
-        // Capture mode and dialect names for introspection
-        const char *mode_name_ptr          = (mode == sourcemeta::blaze::Mode::FastValidation) ? "Fast" : "Exhaustive";
-        const std::string dialect_name_str = default_dialect.value_or("auto");
-
-        const auto schema = parse_json_with_depth_limit(std::string_view{schema_str, schema_len}, max_depth);
-        const auto schema_template{
-            sourcemeta::blaze::compile(schema, sourcemeta::core::schema_walker, sourcemeta::core::schema_resolver,
-                                       sourcemeta::blaze::default_schema_compiler, mode, default_dialect.value_or(""))};
-
-        auto *ud = static_cast<CompiledSchemaUserdata *>(lua_newuserdata(L, sizeof(CompiledSchemaUserdata)));
-        ud->ptr  = nullptr;
-        luaL_getmetatable(L, LUABLAZE_COMPILEDSCHEMA_MT);
-        lua_setmetatable(L, -2);
-        ud->ptr  = new CompiledSchema{schema_template,     sourcemeta::blaze::Evaluator{},
-                                     max_array_length,    max_depth,
-                                     max_recursion_depth, mode_name_ptr,
-                                     dialect_name_str};
-        return 1;
-    } catch (const std::exception &e) {
-        error_msg = e.what();
-    } catch (...) {
-        error_msg = "unknown error";
     }
-    return luaL_error(L, "%s", error_msg.c_str());
+    if (has_error) {
+        return luaL_error(L, "%s", err_buf);
+    }
+    return 1;
 }
 
 // Implements `luablaze.validate(compiled_schema, instance_table)`.
