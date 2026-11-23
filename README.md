@@ -9,18 +9,37 @@ This project builds a Lua C module named `luablaze` that lets you:
 
 ## Performance
 
-As of the time of writing this, lua-schema `luarocks install lua-schema` was the most performant and compliant 
-lua implementation of json-schema validation available. This project was created to provide a faster alternative.
+As of the time of writing this, `lua-schema` (`luarocks install lua-schema`) was the most performant and compliant
+Lua implementation of JSON Schema validation available. This project was created to provide a faster alternative.
 
-* On average, luablaze appears to be roughly 4.5x to 5x faster across standard validation scenarios
-* In some cases, luablaze can be up to 10x faster
-* Worst case scenarios show luablaze to be roughly 2x faster
+### Benchmark Results (`luablaze` vs `lua-schema`)
 
-There are probably schemas and tests that lua-schema performs better on, if you find one please let me know!
+Measured with `busted --cpath="./build/?.so" spec/perf_spec.lua` (**10,000 validation iterations** per fixture, Release `-O3` build with GCC 15.2.0, Lua 5.4.8, Linux x86_64, AMD Ryzen AI 9 HX 370):
 
-It's also worth noting, lua-schema is awesome and I'm not trying to take anything away from it. This project 
-was created to provide a faster alternative for certain use cases. The tradeoff is that lua-schema is a pure lua 
-implementation while luablaze is a C/C++ module that uses the sourcemeta/blaze library.
+| Fixture | `luablaze` validate (s) | `lua-schema` validate (s) | Speedup |
+| :--- | ---: | ---: | ---: |
+| `address` | 0.015293 | 0.111862 | **7.31x** |
+| `arrays_of_things` | 0.017201 | 0.230946 | **13.43x** |
+| `basic` | 0.008767 | 0.078727 | **8.98x** |
+| `blog_post` | 0.016765 | 0.283526 | **16.91x** |
+| `complex_objects` | 0.018859 | 0.192237 | **10.19x** |
+| `conditional_with_dependent` | 0.008281 | 0.054133 | **6.54x** |
+| `conditional_with_dependent_schema` | 0.009697 | 0.096425 | **9.94x** |
+| `enumerated_values` | 0.009169 | 0.033176 | **3.62x** |
+| `github-action` | 0.000265 | 0.000869 | **3.28x** |
+| `if_else` | 0.021211 | 0.228061 | **10.75x** |
+| `regex` | 0.007988 | 0.040382 | **5.06x** |
+| `user-profile` | 0.015063 | 0.192015 | **12.75x** |
+| **Total (all 12 fixtures)** | **0.148559** | **1.542359** | **10.38x** |
+
+- Across these 12 scenarios, `luablaze` ranges from **3.3x** to **16.9x** faster (**10.4x** faster in aggregate validation time).
+- You can reproduce these numbers locally with `make test` or `busted --cpath="./build/?.so" spec/perf_spec.lua`.
+
+There are probably schemas and tests that `lua-schema` performs better on; if you find one please let me know!
+
+It's also worth noting, `lua-schema` is awesome and I'm not trying to take anything away from it. This project
+was created to provide a faster alternative for certain use cases. The tradeoff is that `lua-schema` is a pure Lua
+implementation while `luablaze` is a C/C++ module that uses the `sourcemeta/blaze` library.
 
 ### API
 
