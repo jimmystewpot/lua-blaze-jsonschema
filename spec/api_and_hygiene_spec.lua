@@ -133,3 +133,38 @@ describe("Error-path memory safety", function()
     end
   end)
 end)
+
+describe("Table/JSON edge cases (F-10)", function()
+  it("handles embedded-NUL object property keys in validate and validate_json_detailed", function()
+    local schema_str = '{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"a\\u0000b":{"type":"integer"}},"required":["a\\u0000b"]}'
+    local schema = luablaze.new(schema_str)
+
+    local ok_json, report_json = schema:validate_json_detailed('{"a\\u0000b": 1}')
+    assert.is_true(ok_json)
+    assert.is_table(report_json)
+    assert.is_true(report_json.valid)
+
+    local bad_json, bad_report = schema:validate_json_detailed('{"a\\u0000b": "wrong"}')
+    assert.is_false(bad_json)
+    assert.is_table(bad_report)
+    assert.is_false(bad_report.valid)
+
+    assert.is_true(schema:validate({ ["a\0b"] = 1 }))
+    assert.is_false(schema:validate({ ["a"] = 1 }))
+  end)
+
+  it("recognizes > 2^53 integer array keys via lua_isinteger and enforces max_array_length", function()
+    local schema = luablaze.new('{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"array"}', {
+      max_array_length = 10,
+    })
+    local sparse = {}
+    sparse[9007199254740993] = "x" -- 2^53 + 1
+
+    local ok, err = pcall(function()
+      return schema:validate(sparse)
+    end)
+    assert.is_false(ok)
+    assert.is_string(err)
+    assert.truthy(err:find("Array length exceeds max_array_length", 1, true))
+  end)
+end)

@@ -317,8 +317,8 @@ static bool json_to_lua_value(lua_State *L, const sourcemeta::core::JSON &value,
 
 static bool json_object_to_lua_table(lua_State *L, const sourcemeta::core::JSON &obj,
                                      const std::size_t max_recursion_depth, std::size_t depth, std::string &error) {
-    // Ensure we have enough stack space for the table and at least one value
-    if (!lua_checkstack(L, 3)) {
+    // Ensure we have enough stack space for the table, key, and value
+    if (!lua_checkstack(L, 4)) {
         error = "Cannot grow Lua stack (stack overflow risk)";
         return false;
     }
@@ -329,7 +329,9 @@ static bool json_object_to_lua_table(lua_State *L, const sourcemeta::core::JSON 
             error = "Error converting JSON object property '" + pair.first + "': " + error;
             return false;
         }
-        lua_setfield(L, -2, pair.first.c_str());
+        lua_pushlstring(L, pair.first.data(), pair.first.size());
+        lua_insert(L, -2);
+        lua_rawset(L, -3);
     }
     return true;
 }
@@ -393,13 +395,6 @@ static bool json_to_lua_value(lua_State *L, const sourcemeta::core::JSON &value,
     return false;
 }
 
-static bool lua_table_to_json(lua_State *L, int index, std::unordered_set<const void *> &seen,
-                              const std::size_t max_array_length, const std::size_t max_recursion_depth,
-                              std::size_t depth, sourcemeta::core::JSON &out, std::string &error) {
-    const int abs_index = lua_absindex(L, index);
-    return lua_table_to_json_abs(L, abs_index, seen, max_array_length, max_recursion_depth, depth, out, error);
-}
-
 static bool lua_table_to_json_abs(lua_State *L, const int abs_index, std::unordered_set<const void *> &seen,
                                   const std::size_t max_array_length, const std::size_t max_recursion_depth,
                                   std::size_t depth, sourcemeta::core::JSON &out, std::string &error) {
@@ -431,10 +426,11 @@ static bool lua_table_to_json_abs(lua_State *L, const int abs_index, std::unorde
 
     lua_pushnil(L);
     while (lua_next(L, abs_index) != 0) {
-        if (lua_type(L, -2) == LUA_TNUMBER) {
-            lua_Number k   = lua_tonumber(L, -2);
-            lua_Integer ki = lua_tointeger(L, -2);
-            if (static_cast<lua_Number>(ki) != k || ki <= 0) {
+        if (!lua_isinteger(L, -2)) {
+            is_array = false;
+        } else {
+            const lua_Integer ki = lua_tointeger(L, -2);
+            if (ki <= 0) {
                 is_array = false;
             } else {
                 count_int_keys++;
@@ -442,8 +438,6 @@ static bool lua_table_to_json_abs(lua_State *L, const int abs_index, std::unorde
                     max_index = static_cast<std::size_t>(ki);
                 }
             }
-        } else {
-            is_array = false;
         }
         lua_pop(L, 1);
     }
@@ -454,15 +448,6 @@ static bool lua_table_to_json_abs(lua_State *L, const int abs_index, std::unorde
     }
 
     if (is_array) {
-        // Check for potential integer overflow before loop
-        if (max_index == SIZE_MAX) {
-            error = "Array index too large (integer overflow risk)";
-            if (ptr != nullptr) {
-                seen.erase(ptr);
-            }
-            return false;
-        }
-
         if (max_array_length > 0 && max_index > max_array_length) {
             error = "Array length exceeds max_array_length";
             if (ptr != nullptr) {
