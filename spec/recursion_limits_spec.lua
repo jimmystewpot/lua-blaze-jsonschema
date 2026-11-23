@@ -1,3 +1,4 @@
+require("spec.spec_helper")
 local luablaze = require("luablaze")
 
 describe("Recursion limits", function()

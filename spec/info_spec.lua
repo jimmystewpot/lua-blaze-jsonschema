@@ -1,4 +1,5 @@
 -- Tests for the compiled_schema:info() method
+require("spec.spec_helper")
 local luablaze = require("luablaze")
 
 describe("CompiledSchema:info()", function()

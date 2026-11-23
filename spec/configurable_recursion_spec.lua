@@ -1,4 +1,5 @@
 -- Tests for the configurable max_recursion_depth option
+require("spec.spec_helper")
 local luablaze = require("luablaze")
 
 describe("Configurable max_recursion_depth", function()

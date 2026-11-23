@@ -196,41 +196,43 @@ describe("JSON-Schema-Test-Suite", function()
 
             for _, group in ipairs(groups) do
               local schema_str = json.encode(group.schema)
-              local ok, compiled_or_err = pcall(luablaze.new, schema_str, { dialect = dialect, mode = "Exhaustive" })
-              if not ok then
-                local message = tostring(compiled_or_err)
-                if message:find("Could not resolve the reference to an external schema", 1, true) then
-                  goto continue_group
+              for _, mode in ipairs({ "Exhaustive", "Fast" }) do
+                local ok, compiled_or_err = pcall(luablaze.new, schema_str, { dialect = dialect, mode = mode })
+                if not ok then
+                  local message = tostring(compiled_or_err)
+                  if message:find("Could not resolve the reference to an external schema", 1, true) then
+                    goto continue_group
+                  end
+                  if message:find("Could not resolve the metaschema of the schema", 1, true) then
+                    goto continue_group
+                  end
+                  if message:find("Cannot compile unsupported vocabulary", 1, true) then
+                    goto continue_group
+                  end
+                  if message:find("Could not determine how to perform bundling in this dialect", 1, true) then
+                    goto continue_group
+                  end
+                  error(message)
                 end
-                if message:find("Could not resolve the metaschema of the schema", 1, true) then
-                  goto continue_group
-                end
-                if message:find("Cannot compile unsupported vocabulary", 1, true) then
-                  goto continue_group
-                end
-                if message:find("Could not determine how to perform bundling in this dialect", 1, true) then
-                  goto continue_group
-                end
-                error(message)
-              end
-              local compiled = compiled_or_err
+                local compiled = compiled_or_err
 
-              for _, test in ipairs(group.tests) do
-                local instance_str
-                if type(test.data) == "number" then
-                  instance_str = encode_number_plain(test.data)
-                else
-                  instance_str = json.encode(test.data)
-                end
-                local actual = compiled:validate_json(instance_str)
-                if actual ~= test.valid then
-                  print("Test Data: ", instance_str)
-                  local ok, output_table = compiled:validate_json_detailed(instance_str)
-                  local output_str = json.encode(output_table)
-                  assert.are.equal(test.valid, actual, string.format(
-                    "Mismatch in %s [%s]: %s / %s\nOutput: %s",
-                    file, dialect, tostring(group.description), tostring(test.description), tostring(output_str)
-                  ))
+                for _, test in ipairs(group.tests) do
+                  local instance_str
+                  if type(test.data) == "number" then
+                    instance_str = encode_number_plain(test.data)
+                  else
+                    instance_str = json.encode(test.data)
+                  end
+                  local actual = compiled:validate_json(instance_str)
+                  if actual ~= test.valid then
+                    print("Test Data: ", instance_str)
+                    local _, output_table = compiled:validate_json_detailed(instance_str)
+                    local output_str = json.encode(output_table)
+                    assert.are.equal(test.valid, actual, string.format(
+                      "Mismatch in %s [%s, %s]: %s / %s\nOutput: %s",
+                      file, dialect, mode, tostring(group.description), tostring(test.description), tostring(output_str)
+                    ))
+                  end
                 end
               end
 

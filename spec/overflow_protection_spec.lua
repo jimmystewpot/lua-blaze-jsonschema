@@ -1,3 +1,4 @@
+require("spec.spec_helper")
 local luablaze = require("luablaze")
 
 describe("Integer overflow protection", function()
