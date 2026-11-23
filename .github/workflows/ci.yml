@@ -117,9 +117,94 @@ jobs:
           else
             export LUA=$(which lua)
           fi
-          busted --cpath=./build/?.so --lua=/usr/bin/lua${{ steps.version.outputs.lua_version }} --verbose spec/configurable_recursion_spec.lua
-          busted --cpath=./build/?.so --lua=/usr/bin/lua${{ steps.version.outputs.lua_version }} --verbose spec/overflow_protection_spec.lua
-          busted --cpath=./build/?.so --lua=/usr/bin/lua${{ steps.version.outputs.lua_version }} --verbose spec/recursion_limits_spec.lua
+          busted --lua=/usr/bin/lua${{ steps.version.outputs.lua_version }} --verbose spec/configurable_recursion_spec.lua
+          busted --lua=/usr/bin/lua${{ steps.version.outputs.lua_version }} --verbose spec/overflow_protection_spec.lua
+          busted --lua=/usr/bin/lua${{ steps.version.outputs.lua_version }} --verbose spec/recursion_limits_spec.lua
+      - name: API, Metrics, and Hygiene Tests
+        if: always()
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            export LUA=/usr/bin/lua${{ steps.version.outputs.lua_version }}
+          else
+            export LUA=$(which lua)
+          fi
+          busted --lua=/usr/bin/lua${{ steps.version.outputs.lua_version }} --verbose spec/metrics_schema_spec.lua
+          busted --lua=/usr/bin/lua${{ steps.version.outputs.lua_version }} --verbose spec/api_and_hygiene_spec.lua
+          busted --lua=/usr/bin/lua${{ steps.version.outputs.lua_version }} --verbose spec/api_coverage_spec.lua
+
+  sanitizers:
+    name: Sanitizers (${{ matrix.compiler }})
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Ensure submodules are present
+        run: |
+          git submodule update --init --recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreadline-dev libpcre2-dev cmake build-essential clang lua5.4 luarocks lua5.4-dev
+
+      - name: Install test dependencies
+        run: |
+          sudo -E luarocks --lua-version=5.4 install busted
+          sudo -E luarocks --lua-version=5.4 install dkjson
+          sudo -E luarocks --lua-version=5.4 install lrexlib-pcre2
+          sudo -E luarocks --lua-version=5.4 install lua-schema
+
+      - name: Configure and Build with ASan + UBSan
+        run: |
+          if [ "${{ matrix.compiler }}" = "gcc" ]; then
+            export CC=gcc
+            export CXX=g++
+          else
+            export CC=clang
+            export CXX=clang++
+          fi
+          cmake -S . -B build-san \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DLUABLAZE_ENABLE_ASAN=ON \
+            -DLUABLAZE_ENABLE_UBSAN=ON
+          cmake --build build-san --parallel
+
+      - name: Run Functional Specs under ASan + UBSan
+        run: |
+          if [ "${{ matrix.compiler }}" = "gcc" ]; then
+            ASAN_LIB="$(gcc -print-file-name=libasan.so)"
+          else
+            ASAN_LIB="$(clang++ -print-file-name=libclang_rt.asan-x86_64.so)"
+            if [ ! -f "${ASAN_LIB}" ]; then
+              ASAN_LIB="$(clang++ -print-resource-dir)/lib/linux/libclang_rt.asan-x86_64.so"
+            fi
+          fi
+          STDCPP_LIB="$(g++ -print-file-name=libstdc++.so.6)"
+          if [ ! -f "${ASAN_LIB}" ] || [ ! -f "${STDCPP_LIB}" ]; then
+            echo "Error: Failed to resolve preload libraries: ASAN_LIB='${ASAN_LIB}' STDCPP_LIB='${STDCPP_LIB}'"
+            exit 1
+          fi
+          LD_PRELOAD="${ASAN_LIB}:${STDCPP_LIB}" \
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+          busted --cpath=./build-san/?.so --lua=/usr/bin/lua5.4 --verbose \
+            spec/info_spec.lua \
+            spec/luablaze_spec.lua \
+            spec/metrics_schema_spec.lua \
+            spec/configurable_recursion_spec.lua \
+            spec/overflow_protection_spec.lua \
+            spec/recursion_limits_spec.lua \
+            spec/api_and_hygiene_spec.lua \
+            spec/api_coverage_spec.lua
 
   coverage:
     name: Code Coverage
