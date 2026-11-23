@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.10)
 project(luablaze)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
 
 include(CTest)
 
@@ -10,6 +11,9 @@ option(LUABLAZE_INIT_SUBMODULES "Initialize git submodules during CMake configur
 option(LUABLAZE_REQUIRE_TEST_SUITE "Require the JSON-Schema-Test-Suite submodule to be present" ${BUILD_TESTING})
 option(LUABLAZE_BUILD_DOCS "Build documentation using Doxygen" OFF)
 option(LUABLAZE_ENABLE_COVERAGE "Enable code coverage instrumentation" OFF)
+option(LUABLAZE_ENABLE_ASAN "Enable AddressSanitizer across all targets" OFF)
+option(LUABLAZE_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer across all targets" OFF)
+option(LUABLAZE_ENABLE_SIMD "Enable host-compiler SIMD flags (non-portable x86-64 AVX2)" OFF)
 
 if(LUABLAZE_INIT_SUBMODULES)
   find_package(Git QUIET)
@@ -43,6 +47,30 @@ endif()
 set(BLAZE_INSTALL OFF CACHE BOOL "Disable Blaze installation" FORCE)
 set(INSTALL_BLAZE OFF CACHE BOOL "Disable Blaze installation" FORCE)
 set(CMAKE_SKIP_INSTALL_ALL_DEPENDENCY TRUE)
+
+set(LUABLAZE_SANITIZERS)
+if(LUABLAZE_ENABLE_ASAN)
+  list(APPEND LUABLAZE_SANITIZERS address)
+  set(SOURCEMETA_CORE_USE_SYSTEM_ALLOCATOR ON CACHE BOOL "Use system allocator under ASan" FORCE)
+endif()
+if(LUABLAZE_ENABLE_UBSAN)
+  list(APPEND LUABLAZE_SANITIZERS undefined bounds object-size)
+endif()
+if(LUABLAZE_SANITIZERS)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    string(REPLACE ";" "," LUABLAZE_SAN_FLAGS "${LUABLAZE_SANITIZERS}")
+    message(STATUS "Enabling sanitizers: ${LUABLAZE_SAN_FLAGS}")
+    add_compile_options(-O1 -g -fno-omit-frame-pointer -fno-sanitize-recover=all -fsanitize=${LUABLAZE_SAN_FLAGS})
+    add_link_options(-fsanitize=${LUABLAZE_SAN_FLAGS})
+  else()
+    message(WARNING "Sanitizers requested (${LUABLAZE_SANITIZERS}) but unsupported for compiler ${CMAKE_CXX_COMPILER_ID}")
+  endif()
+endif()
+
+if(LUABLAZE_ENABLE_SIMD)
+  include("${CMAKE_CURRENT_SOURCE_DIR}/deps/blaze/vendor/core/cmake/common/compiler/simd.cmake")
+  sourcemeta_enable_simd()
+endif()
 
 add_subdirectory(deps/blaze EXCLUDE_FROM_ALL)
 
@@ -122,9 +150,6 @@ add_library(blaze MODULE
   src/luablaze.h
 )
 
-target_include_directories(blaze PRIVATE "${LUA_INCLUDE_DIR}")
-target_link_libraries(blaze PRIVATE ${LUA_LIBRARIES})
-
 # Pass Blaze version to the C++ code as a compile definition
 target_compile_definitions(blaze PRIVATE BLAZE_LIBRARY_VERSION="${BLAZE_VERSION}")
 
@@ -139,7 +164,7 @@ if(WIN32)
   set_target_properties(blaze PROPERTIES SUFFIX ".dll")
   # MSVC-specific flags
   if(MSVC)
-    target_compile_options(blaze PRIVATE /utf-8)
+    target_compile_options(blaze PRIVATE /utf-8 /W4)
     # MSVC optimizations for Release builds
     target_compile_options(blaze PRIVATE
       $<$<CONFIG:Release>:/O2> # Full optimization
@@ -161,17 +186,27 @@ else()
   set_target_properties(blaze PROPERTIES SUFFIX ".so")
 endif()
 
-# GCC/Clang optimizations (Linux, macOS, MinGW)
+# GCC/Clang optimizations and hygiene (Linux, macOS, MinGW)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(blaze PRIVATE
-    $<$<CONFIG:Release>:-O2> # Aggressive optimization
+    -Wall
+    -Wextra
+    $<$<CXX_COMPILER_ID:GNU>:-fno-rtti>
+    $<$<CONFIG:Release>:-O3> # Aggressive optimization
     $<$<CONFIG:Release>:-DNDEBUG> # Disable assertions
-    $<$<CONFIG:Release>:-flto=auto> # Link-time optimization
-    $<$<CONFIG:Release>:-fomit-frame-pointer> # Free up a register
   )
-  target_link_options(blaze PRIVATE
-    $<$<CONFIG:Release>:-flto=auto> # LTO at link time
-  )
+  if(NOT LUABLAZE_ENABLE_ASAN AND NOT LUABLAZE_ENABLE_UBSAN)
+    target_compile_options(blaze PRIVATE
+      $<$<CONFIG:Release>:-fomit-frame-pointer> # Free up a register
+    )
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+      target_compile_options(blaze PRIVATE $<$<CONFIG:Release>:-flto=auto>)
+      target_link_options(blaze PRIVATE $<$<CONFIG:Release>:-flto=auto>)
+    else()
+      target_compile_options(blaze PRIVATE $<$<CONFIG:Release>:-flto>)
+      target_link_options(blaze PRIVATE $<$<CONFIG:Release>:-flto>)
+    endif()
+  endif()
 endif()
 
 if(LUABLAZE_ENABLE_COVERAGE)
@@ -189,13 +224,24 @@ set_target_properties(blaze PROPERTIES
   VISIBILITY_INLINES_HIDDEN ON
 )
 
-target_include_directories(blaze PRIVATE ${LUA_INCLUDE_DIR})
+target_include_directories(blaze PRIVATE "${LUA_INCLUDE_DIR}")
 
 target_link_libraries(blaze PRIVATE
   ${LUA_LIBRARIES}
   sourcemeta::blaze::compiler
   sourcemeta::blaze::output
 )
+
+if(BUILD_TESTING)
+  find_program(BUSTED_EXECUTABLE busted)
+  if(BUSTED_EXECUTABLE)
+    add_test(
+      NAME luablaze_busted
+      COMMAND ${BUSTED_EXECUTABLE} --cpath=$<TARGET_FILE_DIR:blaze>/?.so ${CMAKE_CURRENT_SOURCE_DIR}/spec
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+  endif()
+endif()
 
 # Install target for LuaRocks
 if(DEFINED INSTALL_CMOD)
