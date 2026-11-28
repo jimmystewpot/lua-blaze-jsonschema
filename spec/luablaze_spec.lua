@@ -162,6 +162,85 @@ local function list_dialect_dirs(tests_dir)
 end
 
 describe("JSON-Schema-Test-Suite", function()
+  local function is_compatible(compatibility, version_under_test)
+    if not compatibility or compatibility == "" then
+      return true
+    end
+    local is_valid = true
+    for constraint in compatibility:gmatch("[^,]+") do
+      local op, ver_str = constraint:match("^([<=]*)(%d+)$")
+      local ver = assert(tonumber(ver_str), "Invalid compatibility constraint: " .. tostring(constraint))
+      if op == "" then
+        is_valid = (version_under_test >= ver)
+      elseif op == "<=" then
+        is_valid = (version_under_test <= ver)
+      elseif op == "=" then
+        is_valid = (version_under_test == ver)
+      else
+        error("Unsupported compatibility operator: " .. tostring(op))
+      end
+      if version_under_test <= ver then
+        break
+      end
+    end
+    return is_valid
+  end
+
+  local function has_tag(tags, target)
+    if type(tags) ~= "table" then
+      return false
+    end
+    for _, tag in ipairs(tags) do
+      if tag == target then
+        return true
+      end
+    end
+    return false
+  end
+
+  local function run_group(file, dialect, group)
+    local schema_str = json.encode(group.schema)
+    for _, mode in ipairs({ "Exhaustive", "Fast" }) do
+      local ok, compiled_or_err = pcall(luablaze.new, schema_str, { dialect = dialect, mode = mode })
+      if not ok then
+        local message = tostring(compiled_or_err)
+        if message:find("Could not resolve the reference to an external schema", 1, true) then
+          return
+        end
+        if message:find("Could not resolve the metaschema of the schema", 1, true) then
+          return
+        end
+        if message:find("Cannot compile unsupported vocabulary", 1, true) then
+          return
+        end
+        if message:find("Could not determine how to perform bundling in this dialect", 1, true) then
+          return
+        end
+        error(message)
+      end
+      local compiled = compiled_or_err
+
+      for _, test in ipairs(group.tests) do
+        local instance_str
+        if type(test.data) == "number" then
+          instance_str = encode_number_plain(test.data)
+        else
+          instance_str = json.encode(test.data)
+        end
+        local actual = compiled:validate_json(instance_str)
+        if actual ~= test.valid then
+          print("Test Data: ", instance_str)
+          local _, output_table = compiled:validate_json_detailed(instance_str)
+          local output_str = json.encode(output_table)
+          assert.are.equal(test.valid, actual, string.format(
+            "Mismatch in %s [%s, %s]: %s / %s\nOutput: %s",
+            file, dialect, mode, tostring(group.description), tostring(test.description), tostring(output_str)
+          ))
+        end
+      end
+    end
+  end
+
   it("runs the JSON-Schema-Test-Suite (excluding optional/remotes)", function()
     local root = os.getenv("GITHUB_WORKSPACE")
     if not root or root == "" then
@@ -170,22 +249,52 @@ describe("JSON-Schema-Test-Suite", function()
       p:close()
     end
     local suite_root = root .. "/deps/json-schema-test-suite"
-    local tests_dir = suite_root .. "/tests"
+    local unified_tests_dir = suite_root .. "/validation/tests"
+    local legacy_tests_dir = suite_root .. "/tests"
+
+    if dir_exists(unified_tests_dir) then
+      local unified_dialects = {
+        { name = "draft4", version = 4 },
+        { name = "draft6", version = 6 },
+        { name = "draft7", version = 7 },
+        { name = "draft2019-09", version = 2019 },
+        { name = "draft2020-12", version = 2020 },
+      }
+      local files = list_json_files(unified_tests_dir)
+      assert.is_true(#files > 0)
+
+      for _, file in ipairs(files) do
+        local content = read_all(file)
+        local suite_file = json.decode(content, 1, json.null)
+        local groups = suite_file.tests or suite_file
+
+        for _, group in ipairs(groups) do
+          if group.externalSchemas == nil and not has_tag(group.tags, "format-assertion") then
+            for _, d in ipairs(unified_dialects) do
+              if is_compatible(group.compatibility, d.version) then
+                run_group(file, d.name, group)
+              end
+            end
+          end
+        end
+      end
+      return
+    end
 
     assert.is_true(
-      dir_exists(tests_dir),
+      dir_exists(legacy_tests_dir),
       "JSON-Schema-Test-Suite submodule is missing. Ensure " ..
-      tests_dir .. " exists (e.g. run: git submodule update --init --recursive)"
+      unified_tests_dir .. " or " .. legacy_tests_dir .. " exists (e.g. run: git submodule update --init --recursive)"
     )
 
-    local dialects = list_dialect_dirs(tests_dir)
+    local dialects = list_dialect_dirs(legacy_tests_dir)
     assert.is_true(#dialects > 0)
 
     for _, dialect in ipairs(dialects) do
       if dialect == "v1" then
         goto continue_dialect
       end
-      local dialect_dir = tests_dir .. "/" .. dialect
+      local dialect_dir = legacy_tests_dir .. "/" .. dialect
       if dir_exists(dialect_dir) then
         local files = list_json_files(dialect_dir)
         for _, file in ipairs(files) do
@@ -195,48 +304,7 @@ describe("JSON-Schema-Test-Suite", function()
             local groups = json.decode(content, 1, json.null)
 
             for _, group in ipairs(groups) do
-              local schema_str = json.encode(group.schema)
-              for _, mode in ipairs({ "Exhaustive", "Fast" }) do
-                local ok, compiled_or_err = pcall(luablaze.new, schema_str, { dialect = dialect, mode = mode })
-                if not ok then
-                  local message = tostring(compiled_or_err)
-                  if message:find("Could not resolve the reference to an external schema", 1, true) then
-                    goto continue_group
-                  end
-                  if message:find("Could not resolve the metaschema of the schema", 1, true) then
-                    goto continue_group
-                  end
-                  if message:find("Cannot compile unsupported vocabulary", 1, true) then
-                    goto continue_group
-                  end
-                  if message:find("Could not determine how to perform bundling in this dialect", 1, true) then
-                    goto continue_group
-                  end
-                  error(message)
-                end
-                local compiled = compiled_or_err
-
-                for _, test in ipairs(group.tests) do
-                  local instance_str
-                  if type(test.data) == "number" then
-                    instance_str = encode_number_plain(test.data)
-                  else
-                    instance_str = json.encode(test.data)
-                  end
-                  local actual = compiled:validate_json(instance_str)
-                  if actual ~= test.valid then
-                    print("Test Data: ", instance_str)
-                    local _, output_table = compiled:validate_json_detailed(instance_str)
-                    local output_str = json.encode(output_table)
-                    assert.are.equal(test.valid, actual, string.format(
-                      "Mismatch in %s [%s, %s]: %s / %s\nOutput: %s",
-                      file, dialect, mode, tostring(group.description), tostring(test.description), tostring(output_str)
-                    ))
-                  end
-                end
-              end
-
-              ::continue_group::
+              run_group(file, dialect, group)
             end
           end
         end

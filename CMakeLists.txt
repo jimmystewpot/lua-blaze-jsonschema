@@ -39,7 +39,9 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/blaze/CMakeLists.txt")
   message(FATAL_ERROR "Blaze submodule not present at deps/blaze. Run: git submodule update --init --recursive")
 endif()
 
-if(BUILD_TESTING AND LUABLAZE_REQUIRE_TEST_SUITE AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/json-schema-test-suite/tests/draft7")
+if(BUILD_TESTING AND LUABLAZE_REQUIRE_TEST_SUITE
+   AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/json-schema-test-suite/validation/tests"
+   AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/json-schema-test-suite/tests/draft7")
   message(FATAL_ERROR "JSON-Schema-Test-Suite submodule not present at deps/json-schema-test-suite. Run: git submodule update --init --recursive deps/json-schema-test-suite")
 endif()
 
